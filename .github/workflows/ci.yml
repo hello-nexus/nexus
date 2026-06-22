@@ -98,7 +98,7 @@ jobs:
     environment: release-signing
     permissions:
       id-token: write
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -263,24 +263,24 @@ jobs:
           path: nexus-service/installer/output/Nexus-Setup.exe
           retention-days: 14
 
-      - name: upload to nexus-releases (tag push only)
+      - name: publish release (tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $tag = $env:GITHUB_REF_NAME
-          gh release view $tag --repo hello-nexus/nexus-releases 2>$null
+          gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
             if ('${{ inputs.prerelease }}' -eq 'true') {
-              gh release create $tag --repo hello-nexus/nexus-releases --title $tag --notes "Automated release from CI." --prerelease
+              gh release create $tag --title $tag --notes "Automated release from CI." --prerelease
             } else {
-              gh release create $tag --repo hello-nexus/nexus-releases --title $tag --notes "Automated release from CI."
+              gh release create $tag --title $tag --notes "Automated release from CI."
             }
           }
           # SHA256SUMS is required: the OTA auto-stage path refuses a release
           # whose hash it can't read from an author-published SHA256SUMS.
-          gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --repo hello-nexus/nexus-releases --clobber
+          gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --clobber
 
   nexus-linux:
     runs-on: ubuntu-latest
@@ -288,6 +288,8 @@ jobs:
     # Opt-in only (same gate as the Windows installer): builds OpenRGB headless +
     # AOT-publishes + packages the Linux tarball.
     if: ${{ inputs.build_installer }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -391,14 +393,14 @@ jobs:
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
           retention-days: 14
 
-      - name: upload to nexus-releases (tag push only)
+      - name: publish release (tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           tag="$GITHUB_REF_NAME"
           pre=""
           [ "${{ inputs.prerelease }}" = "true" ] && pre="--prerelease"
-          gh release view "$tag" --repo hello-nexus/nexus-releases >/dev/null 2>&1 \
-            || gh release create "$tag" --repo hello-nexus/nexus-releases --title "$tag" --notes "Automated release from CI." $pre
-          gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --repo hello-nexus/nexus-releases --clobber
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." $pre
+          gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
