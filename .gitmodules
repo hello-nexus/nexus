@@ -18,3 +18,7 @@
 	path = nexus-gamesync
 	url = https://github.com/hello-nexus/nexus-gamesync.git
 	branch = main
+[submodule "nexus-apps"]
+	path = nexus-apps
+	url = https://github.com/hello-nexus/nexus-apps.git
+	branch = main

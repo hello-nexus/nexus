@@ -18,6 +18,7 @@ repository and documented by its own `README`.
 | [`nexus-overlay`](https://github.com/hello-nexus/nexus-overlay) | The desktop / in-game overlay. |
 | [`nexus-rgb`](https://github.com/hello-nexus/nexus-rgb) | OpenRGB-headless workspace; provides the RGB device backends. |
 | [`nexus-gamesync`](https://github.com/hello-nexus/nexus-gamesync) | Game lighting capture shims. |
+| [`nexus-apps`](https://github.com/hello-nexus/nexus-apps) | First-party + community apps the service bundles (build dependency of `nexus-service`). |
 
 ## Prerequisites
 
@@ -64,6 +65,7 @@ nexus/
   nexus-overlay/   Desktop / in-game overlay
   nexus-rgb/       OpenRGB-headless workspace (RGB device backends)
   nexus-gamesync/  Game lighting capture shims
+  nexus-apps/      Bundled + community apps (built into the service)
   .github/         Cross-component CI
   brand/           Brand assets
 ```
