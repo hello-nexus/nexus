@@ -32,6 +32,9 @@ env:
 # the sibling repos. SUBMODULES_TOKEN is a fine-grained PAT (Contents: read
 # on hello-nexus/*); the checkout step picks it up.
 
+permissions:
+  contents: read
+
 jobs:
   nexus-web:
     runs-on: ubuntu-latest
@@ -144,7 +147,7 @@ jobs:
 
       - name: install Qt (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
-        uses: jurplel/install-qt-action@v4
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
         with:
           version: '5.15.2'
           host: 'windows'
@@ -155,7 +158,7 @@ jobs:
 
       - name: set up MSVC (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
 
@@ -201,9 +204,9 @@ jobs:
 
       # OIDC: no stored secret. The federated credential trusts this repo's
       # release-signing environment; the SP holds the Artifact Signing Certificate
-      # Profile Signer role on the hellonexus account.
+      # Profile Signer role on the signing account.
       - name: Azure login (OIDC) for Artifact Signing
-        uses: azure/login@v3
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -213,11 +216,11 @@ jobs:
       # third-party binaries (OpenRGB, adb) are left unsigned: they are launched
       # by the signed service, never directly by the user.
       - name: sign first-party binaries
-        uses: Azure/artifact-signing-action@v2
+        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
         with:
-          endpoint: https://wus3.codesigning.azure.net/
-          signing-account-name: hellonexus
-          certificate-profile-name: nexus-public
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
           files: |
             ${{ github.workspace }}\nexus-service\publish\Nexus.exe
             ${{ github.workspace }}\nexus-service\publish\overlay\nexus-overlay.exe
@@ -235,11 +238,11 @@ jobs:
       # Sign the installer, then recompute SHA256SUMS over the signed bytes so the
       # published hash (and the OTA integrity check that reads it) matches.
       - name: sign installer
-        uses: Azure/artifact-signing-action@v2
+        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
         with:
-          endpoint: https://wus3.codesigning.azure.net/
-          signing-account-name: hellonexus
-          certificate-profile-name: nexus-public
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
           files: ${{ github.workspace }}\nexus-service\installer\output\Nexus-Setup.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
