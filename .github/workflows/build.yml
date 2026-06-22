@@ -1,0 +1,394 @@
+name: build
+
+# Reusable pipeline called by this repo's ci.yml (public releases) and the
+# private nexus-dev workspace repo (internal releases). Runs in the caller's
+# context: the runners, GITHUB_TOKEN, github.ref, and the release-publish step
+# all belong to the calling repo, so each side publishes to its own Releases.
+on:
+  workflow_call:
+    inputs:
+      build_installer:
+        description: 'Also build the installers (Windows .exe + Linux tarball)'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark the release as a prerelease (beta channel)'
+        type: boolean
+        default: false
+
+# Force actions/* to run on Node 24 instead of the deprecated Node 20.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  nexus-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nexus-web/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - name: typecheck + build
+        run: npm run build
+
+      - name: unit tests
+        run: npm test
+
+  nexus-service:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nexus-service
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - run: dotnet restore Nexus.slnx
+
+      - name: build (non-Windows TFM)
+        run: dotnet build Nexus.slnx --no-restore -c Release -p:BuildWeb=false
+
+      - name: tests
+        run: dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false --logger "console;verbosity=normal"
+
+  nexus-installer-windows:
+    runs-on: windows-latest
+    needs: [nexus-web, nexus-service]
+    # Opt-in only: skip the 2x Windows runner unless the installer was requested.
+    if: ${{ inputs.build_installer }}
+    # The `release-signing` environment is what the Artifact Signing federated
+    # credential trusts (subject repo:hello-nexus/nexus:environment:release-signing).
+    # id-token: write lets azure/login mint the OIDC token for that exchange.
+    environment: release-signing
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nexus-web/package-lock.json
+
+      - name: install nexus-web deps
+        working-directory: nexus-web
+        run: npm ci
+
+      # OpenRGB headless bundle - required by EnsureOpenRgbBundle in the csproj.
+      # openrgb-headless isn't wired as a real git submodule under nexus-rgb
+      # (the workspace keeps it as a sibling clone), so 'submodules: recursive'
+      # doesn't pull it. Clone it explicitly off the 'headless' branch tip.
+      - name: clone openrgb-headless
+        env:
+          GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch headless `
+            "https://x-access-token:$env:GIT_TOKEN@github.com/hello-nexus/openrgb-headless.git" `
+            nexus-rgb/openrgb-headless
+
+      # Cache the build keyed by the openrgb-headless commit SHA so we only
+      # rebuild when that source actually changes.
+      - name: resolve openrgb-headless SHA
+        id: orgb-sha
+        shell: pwsh
+        run: |
+          $sha = (git -C nexus-rgb/openrgb-headless rev-parse HEAD).Trim()
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "openrgb-headless @ $sha"
+
+      - name: restore OpenRGB bundle cache
+        id: orgb-cache
+        uses: actions/cache@v4
+        with:
+          path: nexus-service/Bundled/win-x64/openrgb
+          key: openrgb-headless-win-x64-${{ steps.orgb-sha.outputs.sha }}
+
+      - name: install Qt (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+          modules: ''
+          cache: true
+
+      - name: set up MSVC (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: install jom (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://download.qt.io/official_releases/jom/jom_1_1_4.zip -OutFile jom.zip
+          Expand-Archive -Path jom.zip -DestinationPath jom
+          Add-Content -Path $env:GITHUB_PATH -Value "$pwd\jom"
+
+      - name: build OpenRGB headless (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        working-directory: nexus-rgb/openrgb-headless
+        shell: cmd
+        run: |
+          qmake OpenRGB.pro CONFIG+=release
+          jom -j %NUMBER_OF_PROCESSORS%
+
+      - name: stage OpenRGB bundle (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $src = "nexus-rgb/openrgb-headless/release"
+          $dst = "nexus-service/Bundled/win-x64/openrgb"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          if (Test-Path "$src\OpenRGB.exe") {
+            Move-Item "$src\OpenRGB.exe" "$src\OpenRGB-headless.exe"
+          }
+          Copy-Item "$src\OpenRGB-headless.exe" $dst
+          Copy-Item "$src\*.dll" $dst -ErrorAction SilentlyContinue
+          Copy-Item "nexus-rgb/openrgb-headless/LICENSE" "$dst\LICENSE-OpenRGB.txt"
+          Get-ChildItem $dst | Format-Table Name, Length
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: AOT publish (win-x64)
+        working-directory: nexus-service
+        run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
+
+      # OIDC: no stored secret. The federated credential trusts this repo's
+      # release-signing environment; the SP holds the Artifact Signing Certificate
+      # Profile Signer role on the signing account.
+      - name: Azure login (OIDC) for Artifact Signing
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Sign the first-party executables before Inno packages them. Bundled
+      # third-party binaries (OpenRGB, adb) are left unsigned: they are launched
+      # by the signed service, never directly by the user.
+      - name: sign first-party binaries
+        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        with:
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\nexus-service\publish\Nexus.exe
+            ${{ github.workspace }}\nexus-service\publish\overlay\nexus-overlay.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: build installer
+        working-directory: nexus-service
+        run: powershell -File installer/build-installer.ps1 -PublishDir "${{ github.workspace }}\nexus-service\publish"
+
+      # Sign the installer, then recompute SHA256SUMS over the signed bytes so the
+      # published hash (and the OTA integrity check that reads it) matches.
+      - name: sign installer
+        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        with:
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\nexus-service\installer\output\Nexus-Setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: recompute SHA256SUMS over the signed installer
+        shell: pwsh
+        run: |
+          $out = "nexus-service/installer/output/Nexus-Setup.exe"
+          $sha = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          "$sha  Nexus-Setup.exe" | Set-Content -Path "nexus-service/installer/output/SHA256SUMS" -NoNewline
+          Write-Host "SHA256 (signed): $sha"
+
+      - name: upload Nexus-Setup.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexus-Setup-Windows
+          path: nexus-service/installer/output/Nexus-Setup.exe
+          retention-days: 14
+
+      - name: publish release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            if ('${{ inputs.prerelease }}' -eq 'true') {
+              gh release create $tag --title $tag --notes "Automated release from CI." --prerelease
+            } else {
+              gh release create $tag --title $tag --notes "Automated release from CI."
+            }
+          }
+          # SHA256SUMS is required: the OTA auto-stage path refuses a release
+          # whose hash it can't read from an author-published SHA256SUMS.
+          gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --clobber
+
+  nexus-linux:
+    runs-on: ubuntu-latest
+    needs: [nexus-web, nexus-service]
+    # Opt-in only (same gate as the Windows installer): builds OpenRGB headless +
+    # AOT-publishes + packages the Linux tarball.
+    if: ${{ inputs.build_installer }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nexus-web/package-lock.json
+
+      - name: install nexus-web deps
+        working-directory: nexus-web
+        run: npm ci
+
+      # OpenRGB headless bundle - required by EnsureOpenRgbBundle for linux-x64.
+      # Not a real submodule (sibling clone); fetch the 'headless' branch tip.
+      - name: clone openrgb-headless
+        env:
+          GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          git clone --depth 1 --branch headless \
+            "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
+            nexus-rgb/openrgb-headless
+
+      - name: resolve openrgb-headless SHA
+        id: orgb-sha
+        run: echo "sha=$(git -C nexus-rgb/openrgb-headless rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: restore OpenRGB bundle cache
+        id: orgb-cache
+        uses: actions/cache@v4
+        with:
+          path: nexus-service/Bundled/linux-x64/openrgb
+          key: openrgb-headless-linux-x64-${{ steps.orgb-sha.outputs.sha }}
+
+      - name: install OpenRGB build deps (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qtbase5-dev libusb-1.0-0-dev libhidapi-dev \
+            libmbedtls-dev libudev-dev libdbus-1-dev pkg-config build-essential patchelf
+
+      - name: build OpenRGB headless (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        working-directory: nexus-rgb/openrgb-headless
+        run: |
+          qmake OpenRGB.pro CONFIG+=release
+          make -j"$(nproc)"
+
+      - name: stage OpenRGB bundle (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        run: |
+          dst="nexus-service/Bundled/linux-x64/openrgb"
+          mkdir -p "$dst"
+          # qmake TARGET casing has drifted (OpenRGB -> openrgb); match it
+          # case-insensitively so a rename on the headless branch doesn't break
+          # this on the case-sensitive Linux FS (Windows is case-insensitive).
+          src=$(find nexus-rgb/openrgb-headless -maxdepth 1 -type f -iname openrgb | head -1)
+          [ -n "$src" ] || { echo "OpenRGB headless binary not found after build:"; ls -la nexus-rgb/openrgb-headless; exit 1; }
+          cp "$src" "$dst/openrgb-headless"
+          cp nexus-rgb/openrgb-headless/LICENSE "$dst/LICENSE-OpenRGB.txt" || true
+          chmod +x "$dst/openrgb-headless"
+          # This is the HEADLESS build - it must not link Qt. Fail loudly if it does.
+          if ldd "$dst/openrgb-headless" | grep -qi 'libqt'; then
+            echo "ERROR: openrgb-headless links Qt; expected a no-Qt headless build"; exit 1
+          fi
+          # Bundle the non-standard runtime dep (mbedTLS, present in the build
+          # image but not on e.g. Fedora) next to the binary, and set
+          # rpath=$ORIGIN so it loads regardless of the host's system libs.
+          for soname in $(ldd "$dst/openrgb-headless" | awk '/libmbed/ {print $1}'); do
+            real=$(ldd "$dst/openrgb-headless" | awk -v s="$soname" '$1==s {print $3}')
+            [ -n "$real" ] && cp -L "$real" "$dst/$soname"
+          done
+          patchelf --set-rpath '$ORIGIN' "$dst/openrgb-headless"
+          echo "rpath: $(patchelf --print-rpath "$dst/openrgb-headless")"
+          ls -la "$dst"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      # NativeAOT needs a C toolchain + zlib for the link step.
+      - name: install AOT toolchain
+        run: sudo apt-get install -y -qq clang lld zlib1g-dev
+
+      - name: AOT publish (linux-x64)
+        working-directory: nexus-service
+        run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
+
+      - name: package tarball
+        working-directory: nexus-service
+        run: bash installer/linux/package.sh "$PWD/publish" "$PWD/installer/output"
+
+      - name: upload Nexus-Linux-x64.tar.gz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexus-Linux-x64
+          path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
+          retention-days: 14
+
+      - name: publish release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          pre=""
+          [ "${{ inputs.prerelease }}" = "true" ] && pre="--prerelease"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." $pre
+          gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
