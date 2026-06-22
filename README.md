@@ -78,5 +78,5 @@ in-app updater compares against the latest semver `vX.Y.Z` tag; prerelease tags
 
 ## License
 
-[GPL-3.0](LICENSE). Each submodule carries its own license; the bundled
+[AGPL-3.0](LICENSE). Each submodule carries its own license; the bundled
 OpenRGB engine is GPLv2 and runs as a separate child process.
