@@ -1,0 +1,23 @@
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+*~
+
+# Build artifacts
+builds/
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+__pycache__/
+**/.next/
+**/wwwroot/build/
+
+# Logs
+*.log
+logs/

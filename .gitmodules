@@ -1,0 +1,20 @@
+[submodule "nexus-service"]
+	path = nexus-service
+	url = https://github.com/hello-nexus/nexus-service.git
+	branch = main
+[submodule "nexus-web"]
+	path = nexus-web
+	url = https://github.com/hello-nexus/nexus-web.git
+	branch = main
+[submodule "nexus-overlay"]
+	path = nexus-overlay
+	url = https://github.com/hello-nexus/nexus-overlay.git
+	branch = main
+[submodule "nexus-rgb"]
+	path = nexus-rgb
+	url = https://github.com/hello-nexus/nexus-rgb.git
+	branch = main
+[submodule "nexus-gamesync"]
+	path = nexus-gamesync
+	url = https://github.com/hello-nexus/nexus-gamesync.git
+	branch = main
