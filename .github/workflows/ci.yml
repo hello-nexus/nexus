@@ -18,7 +18,7 @@ on:
         type: boolean
         default: false
       prerelease:
-        description: 'Mark the nexus-releases upload as a prerelease (beta channel)'
+        description: 'Mark the release as a prerelease (beta channel)'
         type: boolean
         default: false
 
@@ -31,9 +31,6 @@ env:
 # so submodule checkout needs a PAT (or GitHub App token) with read access to
 # the sibling repos. SUBMODULES_TOKEN is a fine-grained PAT (Contents: read
 # on hello-nexus/*); the checkout step picks it up.
-#
-# For tag-driven uploads to hello-nexus/nexus-releases the installer job needs
-# RELEASES_TOKEN: a fine-grained PAT with Contents: write on that repo.
 
 jobs:
   nexus-web:
