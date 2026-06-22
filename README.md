@@ -1,4 +1,17 @@
+<div align="center">
+
+<img src="brand/NexusLogoMarkColorAlpha.png" alt="Nexus logo" width="120" />
+
 # Nexus
+
+[![CI](https://img.shields.io/github/actions/workflow/status/hello-nexus/nexus/ci.yml?branch=main&label=CI&logo=github)](https://github.com/hello-nexus/nexus/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/hello-nexus/nexus?include_prereleases&sort=semver&label=release)](https://github.com/hello-nexus/nexus/releases)
+[![License](https://img.shields.io/github/license/hello-nexus/nexus?color=blue)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#prerequisites)
+
+</div>
+
+> **Going open source:** the component repositories linked below are private for now and will be published shortly. Until then, cloning the submodules and building locally requires `hello-nexus` org access.
 
 Nexus is a local-first hardware monitoring, control, and RGB lighting suite for
 Windows, macOS, and Linux. A small native service runs on the machine, talks to
