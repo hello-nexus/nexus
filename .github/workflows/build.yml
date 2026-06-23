@@ -466,7 +466,7 @@ jobs:
       - name: build + bundle OpenRGB (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
         run: |
-          brew install qt@5
+          brew install qt@5 hidapi libusb mbedtls pkg-config
           export PATH="$(brew --prefix qt@5)/bin:$PATH"
           ( cd nexus-rgb/openrgb-headless && qmake OpenRGB.pro CONFIG+=release CONFIG+=sdk_no_version_check && make -j"$(sysctl -n hw.ncpu)" )
           bash nexus-rgb/bundle-macos.sh "$PWD/nexus-service/Bundled/osx-arm64/openrgb"
