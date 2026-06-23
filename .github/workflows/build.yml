@@ -245,7 +245,7 @@ jobs:
           Write-Host "SHA256 (signed): $sha"
 
       - name: upload Nexus-Setup.exe artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
@@ -375,7 +375,7 @@ jobs:
         run: bash installer/linux/package.sh "$PWD/publish" "$PWD/installer/output"
 
       - name: upload Nexus-Linux-x64.tar.gz artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nexus-Linux-x64
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
