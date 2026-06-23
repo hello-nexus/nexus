@@ -30,7 +30,7 @@ jobs:
       run:
         working-directory: nexus-web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
@@ -57,7 +57,7 @@ jobs:
       run:
         working-directory: nexus-service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
@@ -88,7 +88,7 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
@@ -279,7 +279,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
