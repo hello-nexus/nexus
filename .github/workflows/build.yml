@@ -128,7 +128,7 @@ jobs:
 
       - name: restore OpenRGB bundle cache
         id: orgb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: nexus-service/Bundled/win-x64/openrgb
           key: openrgb-headless-win-x64-${{ steps.orgb-sha.outputs.sha }}
@@ -310,7 +310,7 @@ jobs:
 
       - name: restore OpenRGB bundle cache
         id: orgb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: nexus-service/Bundled/linux-x64/openrgb
           key: openrgb-headless-linux-x64-${{ steps.orgb-sha.outputs.sha }}
