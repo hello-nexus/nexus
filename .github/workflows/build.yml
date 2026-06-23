@@ -7,6 +7,10 @@ name: build
 on:
   workflow_call:
     inputs:
+      version:
+        description: 'Release version, e.g. 3.0.0-beta.3. Blank uses the committed nexus-service/VERSION.'
+        type: string
+        default: ''
       build_installer:
         description: 'Also build the installers (Windows .exe + Linux tarball)'
         type: boolean
@@ -186,6 +190,15 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
 
+      - name: stamp version (if provided)
+        if: ${{ inputs.version != '' }}
+        shell: pwsh
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          [IO.File]::WriteAllText("nexus-service/VERSION", $env:VERSION_INPUT)
+          Write-Host "VERSION -> $env:VERSION_INPUT"
+
       - name: AOT publish (win-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
@@ -251,20 +264,20 @@ jobs:
           path: nexus-service/installer/output/Nexus-Setup.exe
           retention-days: 14
 
-      - name: publish release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
         shell: pwsh
         run: |
-          $tag = $env:GITHUB_REF_NAME
+          $tag = if ($env:VERSION_INPUT -ne '') { "v$($env:VERSION_INPUT)" } else { $env:GITHUB_REF_NAME }
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            if ('${{ inputs.prerelease }}' -eq 'true') {
-              gh release create $tag --title $tag --notes "Automated release from CI." --prerelease
-            } else {
-              gh release create $tag --title $tag --notes "Automated release from CI."
-            }
+            $a = @($tag, '--title', $tag, '--notes', 'Automated release from CI.', '--target', $env:GITHUB_SHA)
+            if ($env:PRERELEASE -eq 'true') { $a += '--prerelease' }
+            gh release create @a
           }
           # SHA256SUMS is required: the OTA auto-stage path refuses a release
           # whose hash it can't read from an author-published SHA256SUMS.
@@ -366,6 +379,13 @@ jobs:
       - name: install AOT toolchain
         run: sudo apt-get install -y -qq clang lld zlib1g-dev
 
+      - name: stamp version (if provided)
+        if: ${{ inputs.version != '' }}
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then printf '%s' "$VERSION_INPUT" > nexus-service/VERSION; echo "VERSION -> $VERSION_INPUT"; fi
+
       - name: AOT publish (linux-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
@@ -381,14 +401,16 @@ jobs:
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
           retention-days: 14
 
-      - name: publish release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          tag="$GITHUB_REF_NAME"
+          if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
           pre=""
-          [ "${{ inputs.prerelease }}" = "true" ] && pre="--prerelease"
+          [ "$PRERELEASE" = "true" ] && pre="--prerelease"
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." $pre
+            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
