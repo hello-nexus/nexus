@@ -414,3 +414,129 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
+
+  nexus-macos:
+    runs-on: macos-latest
+    needs: [nexus-web, nexus-service]
+    # Opt-in only (same gate as the Windows/Linux installers). Builds the
+    # osx-arm64 AOT app, signs it Developer ID + hardened runtime, notarizes,
+    # staples, and packages Nexus.dmg. The camera system extension is omitted
+    # (NEXUS_SKIP_CAMERA_EXTENSION) because CI can't provision it headlessly.
+    if: ${{ inputs.build_installer }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nexus-web/package-lock.json
+
+      - name: build web
+        working-directory: nexus-web
+        run: |
+          npm ci
+          npm run build:service
+
+      # OpenRGB headless bundle (osx-arm64). Sibling clone, like the other jobs.
+      - name: clone openrgb-headless
+        env:
+          GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          git clone --depth 1 --branch headless \
+            "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
+            nexus-rgb/openrgb-headless
+
+      - name: resolve openrgb-headless SHA
+        id: orgb-sha
+        run: echo "sha=$(git -C nexus-rgb/openrgb-headless rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: restore OpenRGB bundle cache
+        id: orgb-cache
+        uses: actions/cache@v4
+        with:
+          path: nexus-service/Bundled/osx-arm64/openrgb
+          key: openrgb-headless-osx-arm64-${{ steps.orgb-sha.outputs.sha }}
+
+      - name: build + bundle OpenRGB (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
+        run: |
+          brew install qt@5
+          export PATH="$(brew --prefix qt@5)/bin:$PATH"
+          ( cd nexus-rgb/openrgb-headless && qmake OpenRGB.pro CONFIG+=release CONFIG+=sdk_no_version_check && make -j"$(sysctl -n hw.ncpu)" )
+          bash nexus-rgb/bundle-macos.sh "$PWD/nexus-service/Bundled/osx-arm64/openrgb"
+          file nexus-service/Bundled/osx-arm64/openrgb/OpenRGB-headless | grep -q arm64 \
+            || { echo "OpenRGB headless is not arm64"; exit 1; }
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'preview'
+
+      - name: AOT publish (osx-arm64, no camera extension)
+        working-directory: nexus-service
+        env:
+          NEXUS_SKIP_CAMERA_EXTENSION: '1'
+        run: |
+          dotnet publish Nexus.Service.csproj -c Release -r osx-arm64 -p:BuildWeb=false -o publish
+          test -d Nexus.app || { echo "Nexus.app not assembled"; exit 1; }
+
+      - name: populate wwwroot
+        working-directory: nexus-service
+        run: |
+          cp -R ../nexus-web/dist/. Nexus.app/Contents/MacOS/wwwroot/
+          test -f Nexus.app/Contents/MacOS/wwwroot/index.html
+
+      - name: import Developer ID signing cert
+        env:
+          CERT_P12: ${{ secrets.APPLE_DEVID_CERT_P12 }}
+          CERT_PW: ${{ secrets.APPLE_DEVID_CERT_PASSWORD }}
+        run: |
+          KCPW="$(uuidgen)"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/devid.p12"
+          security create-keychain -p "$KCPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KCPW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/devid.p12" -P "$CERT_PW" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" "$(security default-keychain -d user | tr -d ' \"')"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KEYCHAIN" >/dev/null
+          rm -f "$RUNNER_TEMP/devid.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: sign + notarize + package dmg
+        working-directory: nexus-service
+        env:
+          MAC_SIGN_IDENTITY: ${{ vars.APPLE_SIGN_IDENTITY }}
+          MAC_NOTARY_APPLE_ID: ${{ vars.APPLE_NOTARY_APPLE_ID }}
+          MAC_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          MAC_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          mkdir -p installer/output
+          bash Bundled/macos/sign-notarize.sh "$PWD/Nexus.app" "$PWD/installer/output/Nexus.dmg"
+
+      - name: upload Nexus.dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nexus-macOS
+          path: nexus-service/installer/output/Nexus.dmg
+          retention-days: 14
+
+      - name: publish release (tag or version input)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
+          pre=""
+          [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+          gh release view "$tag" >/dev/null 2>&1 \
+            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
+          gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
