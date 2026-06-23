@@ -204,7 +204,7 @@ jobs:
       # third-party binaries (OpenRGB, adb) are left unsigned: they are launched
       # by the signed service, never directly by the user.
       - name: sign first-party binaries
-        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: ${{ vars.SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
@@ -226,7 +226,7 @@ jobs:
       # Sign the installer, then recompute SHA256SUMS over the signed bytes so the
       # published hash (and the OTA integrity check that reads it) matches.
       - name: sign installer
-        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: ${{ vars.SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
