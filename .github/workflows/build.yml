@@ -480,6 +480,13 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
 
+      - name: stamp version (if provided)
+        if: ${{ inputs.version != '' }}
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then printf '%s' "$VERSION_INPUT" > nexus-service/VERSION; echo "VERSION -> $VERSION_INPUT"; fi
+
       - name: AOT publish (osx-arm64, no camera extension)
         working-directory: nexus-service
         env:
