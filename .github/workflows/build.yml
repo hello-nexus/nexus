@@ -468,6 +468,10 @@ jobs:
         run: |
           brew install qt@5 hidapi libusb mbedtls pkg-config
           export PATH="$(brew --prefix qt@5)/bin:$PATH"
+          # clang on macOS does not search Homebrew's prefix by default; point it
+          # at the OpenRGB deps so their headers/libs resolve during make.
+          export CPATH="$(brew --prefix mbedtls)/include:$(brew --prefix hidapi)/include:$(brew --prefix libusb)/include${CPATH:+:$CPATH}"
+          export LIBRARY_PATH="$(brew --prefix mbedtls)/lib:$(brew --prefix hidapi)/lib:$(brew --prefix libusb)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
           ( cd nexus-rgb/openrgb-headless && qmake OpenRGB.pro CONFIG+=release CONFIG+=sdk_no_version_check && make -j"$(sysctl -n hw.ncpu)" )
           bash nexus-rgb/bundle-macos.sh "$PWD/nexus-service/Bundled/osx-arm64/openrgb"
           file nexus-service/Bundled/osx-arm64/openrgb/OpenRGB-headless | grep -q arm64 \
