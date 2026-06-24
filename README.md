@@ -13,10 +13,15 @@
 
 > **Going open source:** the component repositories linked below are private for now and will be published shortly. Until then, cloning the submodules and building locally requires `hello-nexus` org access.
 
-Nexus is a local-first hardware monitoring, control, and RGB lighting suite for
-Windows, macOS, and Linux. A small native service runs on the machine, talks to
-the hardware, and serves a web dashboard you open in the browser; a desktop
-overlay extends it in-game.
+Nexus is a local-first hardware monitoring, control, RGB lighting and fan
+control suite for Windows, macOS, and Linux. A small native service runs on the
+machine, talks to the hardware, and serves a web dashboard you open in the
+browser or in an app.
+
+There is no heavy Electron runtime and it uses your OS-native WebView. It uses a
+minimal amount of CPU and RAM, and it unloads systems that you're not actively
+using. By default, it will use your integrated GPU to run any rendering, freeing
+up your dedicated GPU for your gaming or workstation tasks.
 
 This repository is the umbrella: it pulls each component in as a git submodule
 and carries the cross-component CI. Each component is developed in its own
