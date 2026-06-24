@@ -34,12 +34,12 @@ jobs:
       run:
         working-directory: nexus-web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -61,12 +61,12 @@ jobs:
       run:
         working-directory: nexus-service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
@@ -92,12 +92,12 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -132,7 +132,7 @@ jobs:
 
       - name: restore OpenRGB bundle cache
         id: orgb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: nexus-service/Bundled/win-x64/openrgb
           key: openrgb-headless-win-x64-${{ steps.orgb-sha.outputs.sha }}
@@ -185,7 +185,7 @@ jobs:
           Copy-Item "nexus-rgb/openrgb-headless/LICENSE" "$dst\LICENSE-OpenRGB.txt"
           Get-ChildItem $dst | Format-Table Name, Length
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
@@ -258,7 +258,7 @@ jobs:
           Write-Host "SHA256 (signed): $sha"
 
       - name: upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
@@ -292,12 +292,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -323,7 +323,7 @@ jobs:
 
       - name: restore OpenRGB bundle cache
         id: orgb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: nexus-service/Bundled/linux-x64/openrgb
           key: openrgb-headless-linux-x64-${{ steps.orgb-sha.outputs.sha }}
@@ -370,7 +370,7 @@ jobs:
           echo "rpath: $(patchelf --print-rpath "$dst/openrgb-headless")"
           ls -la "$dst"
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
@@ -395,7 +395,7 @@ jobs:
         run: bash installer/linux/package.sh "$PWD/publish" "$PWD/installer/output"
 
       - name: upload tarball artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nexus-Linux-x64
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
@@ -426,12 +426,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -458,7 +458,7 @@ jobs:
 
       - name: restore OpenRGB bundle cache
         id: orgb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: nexus-service/Bundled/osx-arm64/openrgb
           key: openrgb-headless-osx-arm64-${{ steps.orgb-sha.outputs.sha }}
@@ -475,7 +475,7 @@ jobs:
           file nexus-service/Bundled/osx-arm64/openrgb/OpenRGB-headless | grep -q arm64 \
             || { echo "OpenRGB headless is not arm64"; exit 1; }
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
@@ -530,7 +530,7 @@ jobs:
           bash Bundled/macos/sign-notarize.sh "$PWD/Nexus.app" "$PWD/installer/output/Nexus.dmg"
 
       - name: upload dmg artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nexus-macOS
           path: nexus-service/installer/output/Nexus.dmg
