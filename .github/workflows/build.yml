@@ -249,25 +249,19 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: version + hash the signed installer
+      - name: recompute SHA256SUMS over the signed installer
         shell: pwsh
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
         run: |
-          $ver = if ($env:VERSION_INPUT -ne '') { $env:VERSION_INPUT } else { $env:GITHUB_REF_NAME -replace '^v','' }
-          $dir = "nexus-service/installer/output"
-          $name = "Nexus-Setup-$ver.exe"
-          Move-Item "$dir/Nexus-Setup.exe" "$dir/$name" -Force
-          $sha = (Get-FileHash "$dir/$name" -Algorithm SHA256).Hash.ToLower()
-          "$sha  $name" | Set-Content -Path "$dir/SHA256SUMS" -NoNewline
-          "WIN_ASSET=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "Windows asset: $name  SHA256 (signed): $sha"
+          $out = "nexus-service/installer/output/Nexus-Setup.exe"
+          $sha = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+          "$sha  Nexus-Setup.exe" | Set-Content -Path "nexus-service/installer/output/SHA256SUMS" -NoNewline
+          Write-Host "SHA256 (signed): $sha"
 
       - name: upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nexus-Setup-Windows
-          path: nexus-service/installer/output/${{ env.WIN_ASSET }}
+          path: nexus-service/installer/output/Nexus-Setup.exe
           retention-days: 14
 
       - name: publish release
@@ -287,7 +281,7 @@ jobs:
           }
           # SHA256SUMS is required: the OTA auto-stage path refuses a release
           # whose hash it can't read from an author-published SHA256SUMS.
-          gh release upload $tag "nexus-service/installer/output/$($env:WIN_ASSET)" nexus-service/installer/output/SHA256SUMS --clobber
+          gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --clobber
 
   nexus-linux:
     runs-on: ubuntu-latest
@@ -400,20 +394,11 @@ jobs:
         working-directory: nexus-service
         run: bash installer/linux/package.sh "$PWD/publish" "$PWD/installer/output"
 
-      - name: version tarball
-        working-directory: nexus-service
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
-        run: |
-          if [ -n "$VERSION_INPUT" ]; then ver="$VERSION_INPUT"; else ver="${GITHUB_REF_NAME#v}"; fi
-          mv installer/output/Nexus-Linux-x64.tar.gz "installer/output/Nexus-Linux-x64-$ver.tar.gz"
-          echo "LINUX_ASSET=Nexus-Linux-x64-$ver.tar.gz" >> "$GITHUB_ENV"
-
       - name: upload tarball artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nexus-Linux-x64
-          path: nexus-service/installer/output/${{ env.LINUX_ASSET }}
+          path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
           retention-days: 14
 
       - name: publish release
@@ -428,7 +413,7 @@ jobs:
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
-          gh release upload "$tag" "nexus-service/installer/output/$LINUX_ASSET" --clobber
+          gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
 
   nexus-macos:
     runs-on: macos-latest
@@ -540,18 +525,15 @@ jobs:
           MAC_NOTARY_APPLE_ID: ${{ vars.APPLE_NOTARY_APPLE_ID }}
           MAC_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
           MAC_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          VERSION_INPUT: ${{ inputs.version }}
         run: |
           mkdir -p installer/output
-          if [ -n "$VERSION_INPUT" ]; then ver="$VERSION_INPUT"; else ver="${GITHUB_REF_NAME#v}"; fi
-          bash Bundled/macos/sign-notarize.sh "$PWD/Nexus.app" "$PWD/installer/output/Nexus-$ver.dmg"
-          echo "MAC_ASSET=Nexus-$ver.dmg" >> "$GITHUB_ENV"
+          bash Bundled/macos/sign-notarize.sh "$PWD/Nexus.app" "$PWD/installer/output/Nexus.dmg"
 
       - name: upload dmg artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nexus-macOS
-          path: nexus-service/installer/output/${{ env.MAC_ASSET }}
+          path: nexus-service/installer/output/Nexus.dmg
           retention-days: 14
 
       - name: publish release (tag or version input)
@@ -566,4 +548,4 @@ jobs:
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
-          gh release upload "$tag" "nexus-service/installer/output/$MAC_ASSET" --clobber
+          gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
