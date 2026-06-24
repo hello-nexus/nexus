@@ -262,7 +262,7 @@ jobs:
         with:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
-          retention-days: 14
+          retention-days: 7
 
       - name: publish release
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
@@ -399,7 +399,7 @@ jobs:
         with:
           name: Nexus-Linux-x64
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
-          retention-days: 14
+          retention-days: 7
 
       - name: publish release
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
@@ -534,7 +534,7 @@ jobs:
         with:
           name: Nexus-macOS
           path: nexus-service/installer/output/Nexus.dmg
-          retention-days: 14
+          retention-days: 7
 
       - name: publish release (tag or version input)
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
