@@ -275,7 +275,7 @@ jobs:
           $tag = if ($env:VERSION_INPUT -ne '') { "v$($env:VERSION_INPUT)" } else { $env:GITHUB_REF_NAME }
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            $a = @($tag, '--title', $tag, '--notes', 'Automated release from CI.', '--target', $env:GITHUB_SHA)
+            $a = @($tag, '--title', $tag, '--generate-notes', '--target', $env:GITHUB_SHA)
             if ($env:PRERELEASE -eq 'true') { $a += '--prerelease' }
             gh release create @a
           }
@@ -412,7 +412,7 @@ jobs:
           pre=""
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
+            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
 
   nexus-macos:
@@ -547,5 +547,5 @@ jobs:
           pre=""
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --notes "Automated release from CI." --target "$GITHUB_SHA" $pre
+            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
