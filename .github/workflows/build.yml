@@ -549,3 +549,56 @@ jobs:
           gh release view "$tag" >/dev/null 2>&1 \
             || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
+
+  # Rewrite the release body from the submodule commits (the per-repo changes),
+  # skipping the umbrella's own bump/CI commits. Runs after the build jobs have
+  # created the release; on failure the release keeps the --generate-notes body.
+  release-notes:
+    needs: [nexus-installer-windows, nexus-linux, nexus-macos]
+    if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: compose notes from submodule commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
+          prev=$(git tag -l 'v*' --sort=-v:refname | awk -v cur="$tag" 'f{print;exit} $0==cur{f=1}')
+          echo "tag=$tag prev=${prev:-<none>}"
+          : > body.md
+          while read -r path; do
+            new=$(git ls-tree HEAD "$path" 2>/dev/null | awk '{print $3}')
+            [ -n "$new" ] || continue
+            old=""
+            [ -n "$prev" ] && old=$(git ls-tree "$prev" "$path" 2>/dev/null | awk '{print $3}')
+            [ "$old" = "$new" ] && continue
+            name=$(basename "$path")
+            if ! { [ -n "$old" ] && git -C "$path" cat-file -e "${old}^{commit}" 2>/dev/null \
+                   && git -C "$path" cat-file -e "${new}^{commit}" 2>/dev/null; }; then
+              git -C "$path" fetch -q --unshallow 2>/dev/null || git -C "$path" fetch -q 2>/dev/null || true
+            fi
+            if [ -n "$old" ] && git -C "$path" cat-file -e "${old}^{commit}" 2>/dev/null \
+               && git -C "$path" cat-file -e "${new}^{commit}" 2>/dev/null; then
+              log=$(git -C "$path" log --no-merges --pretty='- %s' "${old}..${new}")
+            elif [ -z "$old" ]; then
+              log="- added"
+            else
+              log="- updated"
+            fi
+            [ -n "$log" ] || continue
+            { echo "### ${name}"; printf '%s\n\n' "$log"; } >> body.md
+          done < <(git config -f .gitmodules --get-regexp path | awk '{print $2}')
+          [ -s body.md ] || printf '_No submodule changes since %s._\n\n' "${prev:-the previous release}" >> body.md
+          [ -n "$prev" ] && printf '**Full Changelog**: %s/%s/compare/%s...%s\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$tag" >> body.md
+          echo "----- body.md -----"; cat body.md
+          gh release edit "$tag" --notes-file body.md || echo "release edit skipped (no release?)"
