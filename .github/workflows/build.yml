@@ -602,3 +602,46 @@ jobs:
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$tag" >> body.md
           echo "----- body.md -----"; cat body.md
           gh release edit "$tag" --notes-file body.md || echo "release edit skipped (no release?)"
+
+      # Announce in Discord. A release created here is authored by GITHUB_TOKEN,
+      # and GitHub suppresses the 'release: published' event for token-created
+      # releases - so the standalone discord-release.yml never fires for a CI
+      # release. Post directly from this job instead (it runs last, after assets
+      # + composed notes). Manual human releases still go via discord-release.yml.
+      - name: announce in Discord
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VERSION_INPUT: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -uo pipefail
+          if [ -z "${WEBHOOK:-}" ]; then echo "no DISCORD_WEBHOOK_URL; skipping"; exit 0; fi
+          if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
+          # The job runs on !cancelled(), i.e. even when an installer job failed.
+          # Only announce a release that was actually published.
+          gh release view "$tag" >/dev/null 2>&1 || { echo "no published release for $tag; skipping"; exit 0; }
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"
+          body=$(cat body.md 2>/dev/null || echo "")
+          if [ "${PRERELEASE}" = "true" ]; then
+            title="🧪 Nexus ${tag} (beta) is out"; color=16763904
+          else
+            title="🚀 Nexus ${tag} is out"; color=5793266
+          fi
+          # Truncate inside jq (code-point safe) to Discord's 4096-char embed limit.
+          payload=$(jq -n --arg title "$title" --arg url "$url" --arg body "$body" --argjson color "$color" \
+            '($body | if (length > 3900)
+                      then .[0:3900] + "\n\n… [read the full notes](" + $url + ")"
+                      else . end) as $desc
+             | { embeds: [ { title: $title, url: $url, description: $desc, color: $color } ] }')
+          post() { curl -sS -o /tmp/discord-resp -w '%{http_code}' \
+            -H 'Content-Type: application/json' -X POST "$WEBHOOK" -d "$payload"; }
+          code=$(post)
+          # One retry on a rate-limit (honor retry_after) or transient 5xx/curl error.
+          case "$code" in
+            429) wait=$(jq -r '.retry_after // 2' /tmp/discord-resp 2>/dev/null || echo 2)
+                 sleep "$(printf '%.0f' "$wait" 2>/dev/null || echo 2)"; code=$(post) ;;
+            5*|000) sleep 3; code=$(post) ;;
+          esac
+          echo "discord responded $code"
+          [ "$code" = "204" ] || [ "$code" = "200" ] || { echo "::warning::discord post failed ($code)"; cat /tmp/discord-resp; }
