@@ -1,0 +1,144 @@
+name: discord-release
+
+# Announce a release in Discord once it is fully built. The release is created
+# early by the build jobs (gh release create), so 'published' fires before the
+# OS binaries and the composed notes exist. This job polls until all required
+# assets are attached AND the notes have been rewritten, then posts the body +
+# link to a Discord channel webhook. Covers CI releases and manual gh releases.
+on:
+  release:
+    types: [published]
+  # Manual re-announce / backfill: post any existing tag on demand.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to announce, e.g. v3.0.2-beta.3'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: wait for assets + composed notes, then post to Discord
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # On 'release' these come from the event; on 'workflow_dispatch' TAG is
+          # the input and URL/PRERELEASE are resolved from the API below.
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "::error::DISCORD_WEBHOOK_URL secret is not set"; exit 1
+          fi
+          if [ -z "${TAG:-}" ]; then
+            echo "::error::no release tag to announce"; exit 1
+          fi
+
+          # One transient GitHub API blip during the ~45 min poll shouldn't abort.
+          gh_api() {
+            local i
+            for i in 1 2 3; do
+              gh api "$@" && return 0
+              sleep $(( i * 5 ))
+            done
+            return 1
+          }
+
+          # workflow_dispatch carries no release payload - resolve URL + prerelease.
+          if [ -z "${RELEASE_URL:-}" ] || [ "${PRERELEASE:-}" = "" ]; then
+            rel=$(gh_api "repos/${REPO}/releases/tags/${TAG}")
+            RELEASE_URL=$(printf '%s' "$rel" | jq -r '.html_url')
+            PRERELEASE=$(printf '%s' "$rel" | jq -r '.prerelease')
+          fi
+
+          # Every release MUST carry both per-OS binaries and SHA256SUMS (AGENTS
+          # release invariant). Gate the post on all three being present.
+          required=(Nexus-Setup.exe Nexus.dmg SHA256SUMS)
+
+          # Poll up to ~45 min (the macOS notarize + AOT builds are the long pole).
+          deadline=$(( $(date +%s) + 45*60 ))
+          assets_ready=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            json=$(gh_api "repos/${REPO}/releases/tags/${TAG}")
+            have=$(printf '%s' "$json" | jq -r '.assets[].name')
+            missing=()
+            for a in "${required[@]}"; do
+              printf '%s\n' "$have" | grep -qxF "$a" || missing+=("$a")
+            done
+            if [ "${#missing[@]}" -eq 0 ]; then
+              assets_ready=1
+              echo "all required assets present"
+              break
+            fi
+            echo "waiting for assets: ${missing[*]}"
+            sleep 20
+          done
+
+          if [ "$assets_ready" -ne 1 ]; then
+            echo "::error::timed out waiting for release assets on ${TAG}"; exit 1
+          fi
+
+          # The CI 'release-notes' job rewrites the body last, replacing GitHub's
+          # interim --generate-notes body (which has '## What's Changed' h2
+          # sections) with one '### <submodule>' h3 section per changed repo (or a
+          # '_No submodule changes_' fallback). Wait for that h3/fallback marker -
+          # NOT 'Full Changelog', which --generate-notes also emits. Manual
+          # releases never produce it, so fall through after the grace.
+          notes_deadline=$(( $(date +%s) + 5*60 ))
+          while [ "$(date +%s)" -lt "$notes_deadline" ]; do
+            body=$(gh_api "repos/${REPO}/releases/tags/${TAG}" --jq '.body // ""')
+            if printf '%s' "$body" | grep -qE '^###[[:space:]]' \
+               || printf '%s' "$body" | grep -qF 'No submodule changes'; then
+              break
+            fi
+            echo "waiting for composed release notes..."
+            sleep 15
+          done
+          body=$(gh_api "repos/${REPO}/releases/tags/${TAG}" --jq '.body // ""')
+
+          # Discord embed: description hard limit is 4096 chars. Truncate and link
+          # out to the full notes if the body is longer.
+          if [ "${PRERELEASE}" = "true" ]; then
+            title="🧪 Nexus ${TAG} (beta) is out"
+            color=16763904   # amber
+          else
+            title="🚀 Nexus ${TAG} is out"
+            color=5793266    # blurple
+          fi
+
+          # Truncate inside jq (code-point safe; bash ${x:0:N} is bytes under a
+          # non-UTF-8 locale and could split a multibyte char, which jq rejects).
+          payload=$(jq -n \
+            --arg title "$title" \
+            --arg url "$RELEASE_URL" \
+            --arg body "$body" \
+            --argjson color "$color" \
+            '($body | if (length > 3900)
+                      then .[0:3900] + "\n\n… [read the full notes](" + $url + ")"
+                      else . end) as $desc
+             | { embeds: [ { title: $title, url: $url, description: $desc, color: $color } ] }')
+
+          # 204 = posted. Honor one 429 retry_after before giving up.
+          post() { curl -sS -o /tmp/discord-resp -w '%{http_code}' \
+            -H 'Content-Type: application/json' -X POST "$WEBHOOK" -d "$payload"; }
+          code=$(post)
+          if [ "$code" = "429" ]; then
+            wait=$(jq -r '.retry_after // 2' /tmp/discord-resp 2>/dev/null || echo 2)
+            echo "rate-limited; retrying in ${wait}s"
+            sleep "$(printf '%.0f' "$wait" 2>/dev/null || echo 2)"
+            code=$(post)
+          fi
+          echo "discord responded $code"
+          if [ "$code" != "204" ] && [ "$code" != "200" ]; then
+            echo "::error::discord webhook failed ($code)"; cat /tmp/discord-resp; exit 1
+          fi
+          echo "announced ${TAG} in Discord"
