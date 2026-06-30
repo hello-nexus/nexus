@@ -1,0 +1,60 @@
+name: ffmpeg-check
+
+# Dispatch-only validation that scripts/build-ffmpeg-minimal.sh produces a
+# working ffmpeg for every shipped RID, before wiring it into the release
+# pipeline (build.yml). No AOT publish, signing, or release - just the ffmpeg
+# build + a sanity check that the filters/encoders media import needs exist.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: build minimal ffmpeg (linux-x64)
+        working-directory: nexus-service
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm libx264-dev libpulse-dev zlib1g-dev libbz2-dev pkg-config build-essential
+          bash scripts/build-ffmpeg-minimal.sh linux
+          bin=build/ffmpeg/out/linux-x64/ffmpeg
+          test -x "$bin"
+          "$bin" -hide_banner -version | head -1
+          "$bin" -hide_banner -filters | grep -Eq ' scale ' || { echo "scale filter missing"; exit 1; }
+          "$bin" -hide_banner -encoders | grep -Eq ' libx264 ' || { echo "libx264 encoder missing"; exit 1; }
+          ls -la "$bin"
+
+  osx-and-win:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: build minimal ffmpeg (osx-arm64)
+        working-directory: nexus-service
+        run: |
+          brew install nasm x264 pkg-config
+          bash scripts/build-ffmpeg-minimal.sh mac
+          bin=build/ffmpeg/out/osx-arm64/ffmpeg
+          test -x "$bin"
+          "$bin" -hide_banner -version | head -1
+          "$bin" -hide_banner -filters | grep -Eq ' scale ' || { echo "scale filter missing"; exit 1; }
+          "$bin" -hide_banner -encoders | grep -Eq ' libx264 ' || { echo "libx264 encoder missing"; exit 1; }
+          ls -la "$bin"
+      - name: cross-build minimal ffmpeg (win-x64)
+        working-directory: nexus-service
+        run: |
+          brew install mingw-w64
+          bash scripts/build-ffmpeg-minimal.sh win
+          bin=build/ffmpeg/out/win-x64/ffmpeg.exe
+          test -f "$bin"
+          file "$bin" | grep -Eqi 'PE32\+|MS Windows|x86-64' || { echo "not a win64 PE"; exit 1; }
+          ls -la "$bin"
