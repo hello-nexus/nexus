@@ -79,9 +79,43 @@ jobs:
       - name: tests
         run: dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false --logger "console;verbosity=normal"
 
+  # Cross-build the minimal Windows ffmpeg on a macOS runner - the build
+  # script's intended host (brew mingw-w64 with a writable sysroot). The Windows
+  # installer job consumes it as an artifact, which keeps that job off the slow
+  # macOS dmg/notarize job. Cached by the build script's contents.
+  ffmpeg-win:
+    runs-on: macos-latest
+    if: ${{ inputs.build_installer }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: restore win-x64 ffmpeg cache
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: nexus-service/Bundled/win-x64/ffmpeg
+          key: ffmpeg-win-x64-${{ hashFiles('nexus-service/scripts/build-ffmpeg-minimal.sh') }}
+      - name: cross-build minimal ffmpeg (win-x64, cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        working-directory: nexus-service
+        run: |
+          brew install nasm mingw-w64 pkg-config
+          bash scripts/build-ffmpeg-minimal.sh win
+          mkdir -p Bundled/win-x64/ffmpeg
+          cp build/ffmpeg/out/win-x64/ffmpeg.exe Bundled/win-x64/ffmpeg/
+          cp build/ffmpeg/out/win-x64/LICENSE.txt Bundled/win-x64/ffmpeg/ 2>/dev/null || true
+      - name: upload win-x64 ffmpeg
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-win-x64
+          path: nexus-service/Bundled/win-x64/ffmpeg
+          retention-days: 1
+
   nexus-installer-windows:
     runs-on: windows-latest
-    needs: [nexus-web, nexus-service]
+    needs: [nexus-web, nexus-service, ffmpeg-win]
     # Opt-in only: skip the 2x Windows runner unless the installer was requested.
     if: ${{ inputs.build_installer }}
     # The `release-signing` environment is what the Artifact Signing federated
@@ -199,6 +233,30 @@ jobs:
           [IO.File]::WriteAllText("nexus-service/VERSION", $env:VERSION_INPUT)
           Write-Host "VERSION -> $env:VERSION_INPUT"
 
+      # ffmpeg (media import / screen mirror / beats) and NexusVCam.dll (Windows
+      # virtual camera) are gitignored and built out-of-band, so CI must produce
+      # them or the publish silently ships without them. ffmpeg is cross-built by
+      # the ffmpeg-win job; the vcam DLL builds here (VS Build Tools + Win11 SDK
+      # are on the runner). The csproj auto-detects the vcam build/Release output.
+      - name: download win-x64 ffmpeg bundle
+        uses: actions/download-artifact@v7
+        with:
+          name: ffmpeg-win-x64
+          path: nexus-service/Bundled/win-x64/ffmpeg
+
+      - name: build NexusVCam.dll (virtual camera)
+        working-directory: nexus-service/Bundled/windows/nexus-vcam
+        run: |
+          cmake -G "Visual Studio 17 2022" -A x64 -B build
+          cmake --build build --config Release
+
+      - name: verify win-x64 bundles (ffmpeg + vcam)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe")) { throw "ffmpeg.exe missing" }
+          if (-not (Test-Path "nexus-service/Bundled/windows/nexus-vcam/build/Release/NexusVCam.dll")) { throw "NexusVCam.dll missing" }
+          Get-Item nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe, nexus-service/Bundled/windows/nexus-vcam/build/Release/NexusVCam.dll | Format-Table Name, Length
+
       - name: AOT publish (win-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
@@ -225,6 +283,7 @@ jobs:
           files: |
             ${{ github.workspace }}\nexus-service\publish\Nexus.exe
             ${{ github.workspace }}\nexus-service\publish\overlay\nexus-overlay.exe
+            ${{ github.workspace }}\nexus-service\publish\vcam\NexusVCam.dll
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -386,6 +445,25 @@ jobs:
         run: |
           if [ -n "$VERSION_INPUT" ]; then printf '%s' "$VERSION_INPUT" > nexus-service/VERSION; echo "VERSION -> $VERSION_INPUT"; fi
 
+      - name: restore ffmpeg bundle cache (linux-x64)
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: nexus-service/Bundled/linux-x64/ffmpeg
+          key: ffmpeg-linux-x64-${{ hashFiles('nexus-service/scripts/build-ffmpeg-minimal.sh') }}
+
+      - name: build minimal ffmpeg (linux-x64, cache miss)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        working-directory: nexus-service
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nasm libx264-dev libpulse-dev zlib1g-dev libbz2-dev pkg-config
+          bash scripts/build-ffmpeg-minimal.sh linux
+          mkdir -p Bundled/linux-x64/ffmpeg
+          cp build/ffmpeg/out/linux-x64/ffmpeg Bundled/linux-x64/ffmpeg/
+          cp build/ffmpeg/out/linux-x64/LICENSE.txt Bundled/linux-x64/ffmpeg/ 2>/dev/null || true
+          chmod +x Bundled/linux-x64/ffmpeg/ffmpeg
+
       - name: AOT publish (linux-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
@@ -486,6 +564,24 @@ jobs:
           VERSION_INPUT: ${{ inputs.version }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then printf '%s' "$VERSION_INPUT" > nexus-service/VERSION; echo "VERSION -> $VERSION_INPUT"; fi
+
+      - name: restore ffmpeg bundle cache (osx-arm64)
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: nexus-service/Bundled/osx-arm64/ffmpeg
+          key: ffmpeg-osx-arm64-${{ hashFiles('nexus-service/scripts/build-ffmpeg-minimal.sh') }}
+
+      - name: build minimal ffmpeg (osx-arm64, cache miss)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        working-directory: nexus-service
+        run: |
+          brew install nasm x264 pkg-config
+          bash scripts/build-ffmpeg-minimal.sh mac
+          mkdir -p Bundled/osx-arm64/ffmpeg
+          cp build/ffmpeg/out/osx-arm64/ffmpeg Bundled/osx-arm64/ffmpeg/
+          cp build/ffmpeg/out/osx-arm64/LICENSE.txt Bundled/osx-arm64/ffmpeg/ 2>/dev/null || true
+          chmod +x Bundled/osx-arm64/ffmpeg/ffmpeg
 
       - name: AOT publish (osx-arm64, no camera extension)
         working-directory: nexus-service
