@@ -244,18 +244,28 @@ jobs:
           name: ffmpeg-win-x64
           path: nexus-service/Bundled/win-x64/ffmpeg
 
+      # Ninja + an explicit MSVC env (the OpenRGB job's proven pattern): CMake's
+      # "Visual Studio 17 2022" generator can't locate VS on the runner, but
+      # msvc-dev-cmd sets up cl.exe so the single-config Ninja build works. The
+      # csproj auto-detects the build-ninja/NexusVCam.dll output.
+      - name: set up MSVC (vcam build)
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
       - name: build NexusVCam.dll (virtual camera)
         working-directory: nexus-service/Bundled/windows/nexus-vcam
+        shell: cmd
         run: |
-          cmake -G "Visual Studio 17 2022" -A x64 -B build
-          cmake --build build --config Release
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -B build-ninja
+          cmake --build build-ninja
 
       - name: verify win-x64 bundles (ffmpeg + vcam)
         shell: pwsh
         run: |
           if (-not (Test-Path "nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe")) { throw "ffmpeg.exe missing" }
-          if (-not (Test-Path "nexus-service/Bundled/windows/nexus-vcam/build/Release/NexusVCam.dll")) { throw "NexusVCam.dll missing" }
-          Get-Item nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe, nexus-service/Bundled/windows/nexus-vcam/build/Release/NexusVCam.dll | Format-Table Name, Length
+          if (-not (Test-Path "nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll")) { throw "NexusVCam.dll missing" }
+          Get-Item nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe, nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll | Format-Table Name, Length
 
       - name: AOT publish (win-x64)
         working-directory: nexus-service
