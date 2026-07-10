@@ -118,6 +118,9 @@ jobs:
     needs: [nexus-web, nexus-service, ffmpeg-win]
     # Opt-in only: skip the 2x Windows runner unless the installer was requested.
     if: ${{ inputs.build_installer }}
+    env:
+      # Pins both the `nuget install` and the -DlibPath folder below.
+      TRUSTED_SIGNING_CLIENT_VERSION: '1.0.95'
     # The `release-signing` environment is what the Artifact Signing federated
     # credential trusts (subject repo:hello-nexus/nexus:environment:release-signing).
     # id-token: write lets azure/login mint the OIDC token for that exchange.
@@ -281,50 +284,46 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Sign the first-party executables before Inno packages them. Bundled
-      # third-party binaries (OpenRGB, adb) are left unsigned: they are launched
-      # by the signed service, never directly by the user.
-      - name: sign first-party binaries
-        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
-        with:
-          endpoint: ${{ vars.SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
-          files: |
-            ${{ github.workspace }}\nexus-service\publish\Nexus.exe
-            ${{ github.workspace }}\nexus-service\publish\overlay\nexus-overlay.exe
-            ${{ github.workspace }}\nexus-service\publish\vcam\NexusVCam.dll
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
       - name: install Inno Setup
         run: choco install innosetup --no-progress -y
 
-      - name: build installer
+      # The dlib ships in the Microsoft.Trusted.Signing.Client NuGet package;
+      # signtool comes from the runner's Windows SDK (build-installer.ps1
+      # auto-probes it). Auth is the ambient AzureCliCredential from the
+      # azure/login step above. The signing identity (account/profile/endpoint)
+      # comes from nexus-service/installer/signing-metadata.json - the old
+      # SIGNING_* repo vars are no longer read by this workflow.
+      - name: install Artifact Signing client (dlib)
+        shell: pwsh
+        run: nuget install Microsoft.Trusted.Signing.Client -Version ${{ env.TRUSTED_SIGNING_CLIENT_VERSION }} -OutputDirectory "${{ runner.temp }}\signing"
+
+      # build-installer.ps1 -Sign signs the whole image Smart App Control
+      # checks: every unsigned PE in the publish tree (bundled third-party
+      # binaries included - SACVT validates each PE on the preinstall image
+      # regardless of who launches it), the embedded uninstaller
+      # (SignedUninstaller), and Nexus-Setup.exe itself before SHA256SUMS is
+      # computed, so the published hash (and the OTA integrity check that
+      # reads it) covers the signed bytes.
+      - name: build installer (signed)
         working-directory: nexus-service
-        run: powershell -File installer/build-installer.ps1 -PublishDir "${{ github.workspace }}\nexus-service\publish"
+        run: powershell -File installer/build-installer.ps1 -PublishDir "${{ github.workspace }}\nexus-service\publish" -Sign -DlibPath "${{ runner.temp }}\signing\Microsoft.Trusted.Signing.Client.${{ env.TRUSTED_SIGNING_CLIENT_VERSION }}\bin\x64\Azure.CodeSigning.Dlib.dll"
 
-      # Sign the installer, then recompute SHA256SUMS over the signed bytes so the
-      # published hash (and the OTA integrity check that reads it) matches.
-      - name: sign installer
-        uses: Azure/artifact-signing-action@c0ae2c1d0c1847ab81ac0ab8521bee597cfedd30 # v2
-        with:
-          endpoint: ${{ vars.SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
-          files: ${{ github.workspace }}\nexus-service\installer\output\Nexus-Setup.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
-      - name: recompute SHA256SUMS over the signed installer
+      # Independent re-check of the script's internal gate: a future build
+      # path that skips -Sign must fail here, not ship unsigned PEs. The one
+      # PE this cannot see is the uninstaller embedded in Setup.exe - its
+      # signing is guaranteed only by ISCC succeeding with SignedUninstaller.
+      - name: verify signatures (Smart App Control gate)
         shell: pwsh
         run: |
-          $out = "nexus-service/installer/output/Nexus-Setup.exe"
-          $sha = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
-          "$sha  Nexus-Setup.exe" | Set-Content -Path "nexus-service/installer/output/SHA256SUMS" -NoNewline
-          Write-Host "SHA256 (signed): $sha"
+          $bad = @(Get-ChildItem nexus-service/publish -Recurse -File -Force -Include *.exe, *.dll, *.sys |
+            Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' })
+          $setup = "nexus-service/installer/output/Nexus-Setup.exe"
+          if ((Get-AuthenticodeSignature $setup).Status -ne 'Valid') { $bad += Get-Item $setup }
+          if ($bad.Count -gt 0) {
+            $bad | ForEach-Object { Write-Host "UNSIGNED: $($_.FullName)" }
+            throw "$($bad.Count) unsigned PE file(s)"
+          }
+          Write-Host "Smart App Control gate: publish tree + Nexus-Setup.exe fully signed."
 
       - name: upload installer artifact
         uses: actions/upload-artifact@v7
