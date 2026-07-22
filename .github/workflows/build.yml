@@ -503,7 +503,14 @@ jobs:
           gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
 
   nexus-macos:
-    runs-on: macos-latest
+    # Pinned off macos-latest: it moved to macos-26 (Xcode 26 / ld-1267),
+    # whose linker fails the osx-arm64 NativeAOT link both ways - the default
+    # ld-prime asserts "too many large addends" (dotnet/runtime#119380) and
+    # the -ld_classic workaround hits its own "dylibToOrdinal" assertion. The
+    # last green dmg (v3.0.4-beta.7) built on macos-15, whose older ld links
+    # the AOT binary; -ld_classic (Nexus.Service.csproj) still forces the
+    # classic linker there to stay clear of the large-addends bug.
+    runs-on: macos-15
     needs: [nexus-web, nexus-service]
     # Opt-in only (same gate as the Windows/Linux installers). Builds the
     # osx-arm64 AOT app, signs it Developer ID + hardened runtime, notarizes,
