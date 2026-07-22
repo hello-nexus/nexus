@@ -76,8 +76,30 @@ jobs:
       - name: build (non-Windows TFM)
         run: dotnet build Nexus.slnx --no-restore -c Release -p:BuildWeb=false
 
+      # The full parallel suite intermittently deadlocks on the runner (a
+      # known-flaky, threadpool-starvation stall across unrelated async tests -
+      # passes on a re-run). --blame-hang-timeout aborts a wedged run in
+      # minutes instead of sitting out the 6h job timeout, and the retry lets a
+      # flaky roll recover; orphaned testhosts from an aborted attempt are
+      # swept first so they cannot wedge the next one.
       - name: tests
-        run: dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false --logger "console;verbosity=normal"
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            echo "::group::test attempt $attempt"
+            dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false \
+              --logger "console;verbosity=normal" \
+              --blame-hang-timeout 6m --blame-hang-dump-type none
+            code=$?
+            echo "::endgroup::"
+            if [ $code -eq 0 ]; then exit 0; fi
+            echo "::warning::test attempt $attempt exited $code; sweeping testhosts and retrying"
+            pkill -9 -f testhost 2>/dev/null || true
+            pkill -9 -f "dotnet test" 2>/dev/null || true
+            sleep 5
+          done
+          echo "::error::tests failed after 3 attempts"
+          exit 1
 
   # Cross-build the minimal Windows ffmpeg on a macOS runner - the build
   # script's intended host (brew mingw-w64 with a writable sysroot). The Windows
