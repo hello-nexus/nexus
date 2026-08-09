@@ -209,7 +209,7 @@ jobs:
 
       - name: set up MSVC (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: compnerd/gha-setup-vsdevenv@452f99effa381b81c025ccfbdccaca509bff1b29 # v7
         with:
           arch: x64
 
@@ -270,11 +270,11 @@ jobs:
           path: nexus-service/Bundled/win-x64/ffmpeg
 
       # Ninja + an explicit MSVC env (the OpenRGB job's proven pattern): CMake's
-      # "Visual Studio 17 2022" generator can't locate VS on the runner, but
-      # msvc-dev-cmd sets up cl.exe so the single-config Ninja build works. The
+      # "Visual Studio 17 2022" generator can't locate VS on the runner, but the
+      # vsdevenv action sets up cl.exe so the single-config Ninja build works. The
       # csproj auto-detects the build-ninja/NexusVCam.dll output.
       - name: set up MSVC (vcam build)
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: compnerd/gha-setup-vsdevenv@452f99effa381b81c025ccfbdccaca509bff1b29 # v7
         with:
           arch: x64
 
@@ -352,7 +352,7 @@ jobs:
         with:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
-          retention-days: 7
+          retention-days: 1
 
       - name: publish release
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
@@ -508,7 +508,7 @@ jobs:
         with:
           name: Nexus-Linux-x64
           path: nexus-service/installer/output/Nexus-Linux-x64.tar.gz
-          retention-days: 7
+          retention-days: 1
 
       - name: publish release
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
@@ -668,7 +668,7 @@ jobs:
         with:
           name: Nexus-macOS
           path: nexus-service/installer/output/Nexus.dmg
-          retention-days: 7
+          retention-days: 1
 
       - name: publish release (tag or version input)
         if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
