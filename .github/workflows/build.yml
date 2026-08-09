@@ -208,6 +208,7 @@ jobs:
           cache: true
 
       - name: set up MSVC (cache miss)
+        if: steps.orgb-cache.outputs.cache-hit != 'true'
         uses: compnerd/gha-setup-vsdevenv@452f99effa381b81c025ccfbdccaca509bff1b29 # v7
         with:
           arch: x64
