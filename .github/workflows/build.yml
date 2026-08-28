@@ -74,7 +74,7 @@ jobs:
       - run: dotnet restore Nexus.slnx
 
       - name: build (non-Windows TFM)
-        run: dotnet build Nexus.slnx --no-restore -c Release -p:BuildWeb=false
+        run: dotnet build Nexus.slnx --no-restore -c Release -p:BuildWeb=false -p:BuildApps=false
 
       # The full parallel suite intermittently deadlocks on the runner (a
       # known-flaky, threadpool-starvation stall across unrelated async tests -
@@ -87,7 +87,7 @@ jobs:
           set +e
           for attempt in 1 2 3; do
             echo "::group::test attempt $attempt"
-            dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false \
+            dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false -p:BuildApps=false \
               --logger "console;verbosity=normal" \
               --blame-hang-timeout 6m --blame-hang-dump-type none
             code=$?
@@ -164,6 +164,13 @@ jobs:
 
       - name: install nexus-web deps
         working-directory: nexus-web
+        run: npm ci
+
+      # The SDK bundler that builds the bundled nexus-apps payload. Its own
+      # project (react@18, isolated from the host app's react@19), with its own
+      # lockfile, so the install above does not cover it.
+      - name: install SDK bundler deps
+        working-directory: nexus-web/sdk
         run: npm ci
 
       # OpenRGB headless bundle - required by EnsureOpenRgbBundle in the csproj.
@@ -416,6 +423,13 @@ jobs:
         working-directory: nexus-web
         run: npm ci
 
+      # The SDK bundler that builds the bundled nexus-apps payload. Its own
+      # project (react@18, isolated from the host app's react@19), with its own
+      # lockfile, so the install above does not cover it.
+      - name: install SDK bundler deps
+        working-directory: nexus-web/sdk
+        run: npm ci
+
       # OpenRGB headless bundle - required by EnsureOpenRgbBundle for linux-x64.
       # Not a real submodule (sibling clone); fetch the 'headless' branch tip.
       - name: clone openrgb-headless
@@ -610,6 +624,7 @@ jobs:
         working-directory: nexus-web
         run: |
           npm ci
+          (cd sdk && npm ci)
           npm run build:service
 
       # OpenRGB headless bundle (osx-arm64). Sibling clone, like the other jobs.
