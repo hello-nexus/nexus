@@ -94,6 +94,30 @@ Installer downloads are published as GitHub Releases on this repository. The
 in-app updater compares against the latest semver `vX.Y.Z` tag; prerelease tags
 (`vX.Y.Z-beta.N`) are the beta channel.
 
+## Building from source
+
+A build you make yourself is fully local: devices, lighting, cooling, panels,
+monitoring, and LAN phone pairing all work exactly as they do in a release.
+
+The hosted services are not part of it. Accounts, profile sync, remote access
+over our relay, the benchmark leaderboard, anonymous telemetry, and the
+in-app updater are surfaces we operate and pay for, and they exist only in
+builds we publish. They are absent from a self-built client rather than
+broken - nothing prompts for a login that cannot work.
+
+Technically, a release build carries a signed build credential injected by CI;
+its presence is what compiles those surfaces in. There is no credential in this
+repository, so `dotnet publish` and `npm run build` here produce the local-only
+client described above. Point `NEXUS_API_BASE` at your own server if you want
+to run the cloud half yourself.
+
+## Trademark
+
+The AGPL covers the code, not the name. "Nexus", the Nexus logo, and the
+`hellonexus.com` domain are not licensed with it: a fork must ship under its
+own name and branding, and must not present itself as, or connect to, the
+official service.
+
 ## License
 
 [AGPL-3.0](LICENSE). Each submodule carries its own license; the bundled

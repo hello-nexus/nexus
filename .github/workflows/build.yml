@@ -258,6 +258,19 @@ jobs:
           [IO.File]::WriteAllText("nexus-service/VERSION", $env:VERSION_INPUT)
           Write-Host "VERSION -> $env:VERSION_INPUT"
 
+      - name: mint build credential
+        shell: pwsh
+        env:
+          NEXUS_CLIENT_SIGNING_KEY: ${{ secrets.NEXUS_CLIENT_SIGNING_KEY }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          $version = (Get-Content nexus-service/VERSION -Raw).Trim()
+          $channel = if ($env:PRERELEASE -eq 'true') { 'beta' } else { 'stable' }
+          $token = node scripts/mint-client-token.mjs --version $version --channel $channel --platform win-x64
+          Write-Host "::add-mask::$token"
+          "NEXUS_CLIENT_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # ffmpeg (media import / screen mirror / beats) and NexusVCam.dll (Windows
       # virtual camera) are gitignored and built out-of-band, so CI must produce
       # them or the publish silently ships without them. ffmpeg is cross-built by
@@ -495,6 +508,19 @@ jobs:
           cp build/ffmpeg/out/linux-x64/LICENSE.txt Bundled/linux-x64/ffmpeg/ 2>/dev/null || true
           chmod +x Bundled/linux-x64/ffmpeg/ffmpeg
 
+      - name: mint build credential
+        env:
+          NEXUS_CLIENT_SIGNING_KEY: ${{ secrets.NEXUS_CLIENT_SIGNING_KEY }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          version=$(tr -d '[:space:]' < nexus-service/VERSION)
+          channel=stable
+          if [ "$PRERELEASE" = "true" ]; then channel=beta; fi
+          token=$(node scripts/mint-client-token.mjs --version "$version" --channel "$channel" --platform linux-x64)
+          echo "::add-mask::$token"
+          echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
+
       - name: AOT publish (linux-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
@@ -552,6 +578,19 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: nexus-web/package-lock.json
+
+      - name: mint build credential
+        env:
+          NEXUS_CLIENT_SIGNING_KEY: ${{ secrets.NEXUS_CLIENT_SIGNING_KEY }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          version=$(tr -d '[:space:]' < nexus-service/VERSION)
+          channel=stable
+          if [ "$PRERELEASE" = "true" ]; then channel=beta; fi
+          token=$(node scripts/mint-client-token.mjs --version "$version" --channel "$channel" --platform osx-arm64)
+          echo "::add-mask::$token"
+          echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
 
       - name: build web
         working-directory: nexus-web
