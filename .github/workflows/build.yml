@@ -267,6 +267,12 @@ jobs:
           $version = (Get-Content nexus-service/VERSION -Raw).Trim()
           $channel = if ($env:PRERELEASE -eq 'true') { 'beta' } else { 'stable' }
           $token = node scripts/mint-client-token.mjs --version $version --channel $channel --platform win-x64
+          # pwsh does not fail on a native exit code, so an empty token would
+          # otherwise ship a release with no credential: no OTA, no accounts,
+          # no relay, and nothing to notice it by.
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($token)) {
+            throw "mint-client-token produced no token"
+          }
           Write-Host "::add-mask::$token"
           "NEXUS_CLIENT_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -517,6 +523,10 @@ jobs:
           channel=stable
           if [ "$PRERELEASE" = "true" ]; then channel=beta; fi
           token=$(node scripts/mint-client-token.mjs --version "$version" --channel "$channel" --platform linux-x64)
+          if [ -z "$token" ]; then
+            echo "mint-client-token produced no token" >&2
+            exit 1
+          fi
           echo "::add-mask::$token"
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
@@ -588,6 +598,10 @@ jobs:
           channel=stable
           if [ "$PRERELEASE" = "true" ]; then channel=beta; fi
           token=$(node scripts/mint-client-token.mjs --version "$version" --channel "$channel" --platform osx-arm64)
+          if [ -z "$token" ]; then
+            echo "mint-client-token produced no token" >&2
+            exit 1
+          fi
           echo "::add-mask::$token"
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
