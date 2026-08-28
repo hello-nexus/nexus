@@ -23,7 +23,6 @@ component is developed and documented in its own repository.
 | `nexus-overlay` | Desktop / in-game overlay. |
 | `nexus-rgb` | OpenRGB-headless workspace (RGB device backends). |
 | `nexus-gamesync` | Game lighting capture shims. |
-| `nexus-apps` | First-party + community apps the service bundles. |
 
 Each component's `README` carries its own build, run, and test commands.
 
