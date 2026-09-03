@@ -500,11 +500,12 @@ jobs:
       # the newest. A version that already has assets is refused: replacing
       # published bytes resets their SmartScreen reputation, so a rebuild
       # must bump StubVersion. github.token is scoped to this repo, so the
-      # cross-repo upload uses the PAT.
+      # cross-repo upload needs a token with contents:write on
+      # nexus-installer: INSTALLER_REPO_TOKEN, else the submodules PAT.
       - name: publish to nexus-installer
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+          GH_TOKEN: ${{ secrets.INSTALLER_REPO_TOKEN || secrets.SUBMODULES_TOKEN }}
         run: |
           $m = Select-String -Path nexus-service/installer/bootstrap/Nexus-Bootstrap.iss -Pattern '^#define StubVersion "([^"]+)"'
           if (-not $m) { throw "StubVersion not found in Nexus-Bootstrap.iss" }
