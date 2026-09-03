@@ -214,11 +214,22 @@ jobs:
           modules: ''
           cache: true
 
+      # Enter-VsDevShell from the VS install itself, exported to GITHUB_ENV, so
+      # the job carries no JavaScript action pinned to a deprecated Node.
       - name: set up MSVC (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-        with:
-          arch: x64
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no Visual Studio with the VC x64 toolset on this runner" }
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem env: | Where-Object { $before[$_.Name] -ne $_.Value } | ForEach-Object {
+            "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: install jom (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
@@ -296,13 +307,22 @@ jobs:
           path: nexus-service/Bundled/win-x64/ffmpeg
 
       # Ninja + an explicit MSVC env (the OpenRGB job's proven pattern): CMake's
-      # "Visual Studio 17 2022" generator can't locate VS on the runner, but
-      # msvc-dev-cmd sets up cl.exe so the single-config Ninja build works. The
-      # csproj auto-detects the build-ninja/NexusVCam.dll output.
+      # "Visual Studio 17 2022" generator can't locate VS on the runner, but the
+      # exported dev-shell env puts cl.exe on PATH so the single-config Ninja
+      # build works. The csproj auto-detects the build-ninja/NexusVCam.dll output.
       - name: set up MSVC (vcam build)
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-        with:
-          arch: x64
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no Visual Studio with the VC x64 toolset on this runner" }
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          Get-ChildItem env: | Where-Object { $before[$_.Name] -ne $_.Value } | ForEach-Object {
+            "$($_.Name)=$($_.Value)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
 
       - name: build NexusVCam.dll (virtual camera)
         working-directory: nexus-service/Bundled/windows/nexus-vcam
