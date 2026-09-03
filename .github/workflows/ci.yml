@@ -21,6 +21,10 @@ on:
         description: 'Mark the release as a prerelease (beta channel)'
         type: boolean
         default: false
+      web_installers:
+        description: 'Build + sign the Windows web installers and publish them to hello-nexus/nexus-installer (only after installer/bootstrap changed)'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -32,4 +36,5 @@ jobs:
       version: ${{ inputs.version || '' }}
       build_installer: ${{ inputs.build_installer || false }}
       prerelease: ${{ inputs.prerelease || false }}
+      web_installers: ${{ inputs.web_installers || false }}
     secrets: inherit

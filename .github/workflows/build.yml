@@ -19,6 +19,10 @@ on:
         description: 'Mark the release as a prerelease (beta channel)'
         type: boolean
         default: false
+      web_installers:
+        description: 'Build + sign the Windows web installers (Nexus-Installer.exe, Nexus-Installer-Beta.exe) and publish them to hello-nexus/nexus-installer. Only after installer/bootstrap changed: their bytes are reused across releases.'
+        type: boolean
+        default: false
 
 # Force actions/* to run on Node 24 instead of the deprecated Node 20.
 env:
@@ -418,6 +422,104 @@ jobs:
           # SHA256SUMS is required: the OTA auto-stage path refuses a release
           # whose hash it can't read from an author-published SHA256SUMS.
           gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --clobber
+
+  # The Windows WEB installers: payload-free Inno stubs that download the
+  # current Nexus-Setup.exe at install time. Published to their own repo
+  # (hello-nexus/nexus-installer, a release per StubVersion) so
+  # releases/latest/download/<name> is a fixed URL outside this repo's release
+  # list, which the in-app OTA reads newest-first. Not part of a release:
+  # SmartScreen reputation is per file hash, so these are rebuilt only when
+  # nexus-service/installer/bootstrap changes. Signing mirrors
+  # nexus-installer-windows.
+  nexus-web-installers:
+    runs-on: windows-latest
+    if: ${{ inputs.web_installers }}
+    env:
+      TRUSTED_SIGNING_CLIENT_VERSION: '1.0.95'
+      OUT: nexus-service/installer/output
+      INSTALLER_REPO: hello-nexus/nexus-installer
+    environment: release-signing
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: false
+          token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # Only the installer scripts are needed. The checkout token lives in the
+      # superproject's local git config, which a submodule clone does not
+      # read, so the private nexus-service needs the token on the URL.
+      - name: checkout nexus-service
+        shell: pwsh
+        env:
+          TOKEN: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global "url.https://x-access-token:$env:TOKEN@github.com/.insteadOf" "https://github.com/"
+          git submodule update --init --depth 1 nexus-service
+
+      - name: Azure login (OIDC) for Artifact Signing
+        uses: azure/login@2dd0bbf4064d5a1812889dc200bb8eed2597f82a # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: install Artifact Signing client (dlib)
+        shell: pwsh
+        run: nuget install Microsoft.Trusted.Signing.Client -Version ${{ env.TRUSTED_SIGNING_CLIENT_VERSION }} -OutputDirectory "${{ runner.temp }}\signing"
+
+      - name: build web installers (signed)
+        working-directory: nexus-service
+        run: powershell -File installer/build-installer.ps1 -Bootstrap -Sign -DlibPath "${{ runner.temp }}\signing\Microsoft.Trusted.Signing.Client.${{ env.TRUSTED_SIGNING_CLIENT_VERSION }}\bin\x64\Azure.CodeSigning.Dlib.dll"
+
+      - name: verify signatures
+        shell: pwsh
+        run: |
+          $bad = @('Nexus-Installer.exe', 'Nexus-Installer-Beta.exe' |
+            ForEach-Object { Join-Path $env:OUT $_ } |
+            Where-Object { (Get-AuthenticodeSignature $_).Status -ne 'Valid' })
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host "UNSIGNED: $_" }; throw "$($bad.Count) unsigned web installer(s)" }
+          Get-Content (Join-Path $env:OUT 'Nexus-Installer.exe.sha256'), (Join-Path $env:OUT 'Nexus-Installer-Beta.exe.sha256')
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nexus-Web-Installers
+          path: |
+            ${{ env.OUT }}/Nexus-Installer.exe
+            ${{ env.OUT }}/Nexus-Installer.exe.sha256
+            ${{ env.OUT }}/Nexus-Installer-Beta.exe
+            ${{ env.OUT }}/Nexus-Installer-Beta.exe.sha256
+
+      # One release per StubVersion (from the .iss); releases/latest follows
+      # the newest. A version that already has assets is refused: replacing
+      # published bytes resets their SmartScreen reputation, so a rebuild
+      # must bump StubVersion. github.token is scoped to this repo, so the
+      # cross-repo upload uses the PAT.
+      - name: publish to nexus-installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          $m = Select-String -Path nexus-service/installer/bootstrap/Nexus-Bootstrap.iss -Pattern '^#define StubVersion "([^"]+)"'
+          if (-not $m) { throw "StubVersion not found in Nexus-Bootstrap.iss" }
+          $tag = "v" + $m.Matches[0].Groups[1].Value
+          $published = gh release view $tag -R $env:INSTALLER_REPO --json assets --jq '.assets | length' 2>$null
+          if ($LASTEXITCODE -eq 0 -and [int]$published -gt 0) {
+            throw "$env:INSTALLER_REPO already has $tag with $published asset(s); bump StubVersion in Nexus-Bootstrap.iss before rebuilding"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag -R $env:INSTALLER_REPO --title "Nexus web installers $tag" --notes "Built from nexus-service $(git -C nexus-service rev-parse --short HEAD) by $env:GITHUB_REPOSITORY run $env:GITHUB_RUN_ID."
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          }
+          $files = @('Nexus-Installer.exe', 'Nexus-Installer.exe.sha256', 'Nexus-Installer-Beta.exe', 'Nexus-Installer-Beta.exe.sha256') | ForEach-Object { Join-Path $env:OUT $_ }
+          gh release upload $tag -R $env:INSTALLER_REPO @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
 
   nexus-linux:
     runs-on: ubuntu-latest
