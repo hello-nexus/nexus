@@ -299,6 +299,24 @@ jobs:
           "NEXUS_CLIENT_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # Firmware images are kept out of the public repos, and
+      # EnsureFirmwareBundle fails any credentialed publish that cannot find
+      # them, so pull firmware/ alone from the private workspace.
+      - name: fetch bundled firmware
+        uses: actions/checkout@v5
+        with:
+          repository: hello-nexus/nexus-dev
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+          sparse-checkout: firmware
+          path: .nexus-firmware
+          persist-credentials: false
+
+      - name: point the build at the firmware
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .nexus-firmware/firmware)) { throw "firmware/ missing from nexus-dev" }
+          "NEXUS_FIRMWARE_DIR=$PWD/.nexus-firmware/firmware" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       # ffmpeg (media import / screen mirror / beats) and NexusVCam.dll (Windows
       # virtual camera) are gitignored and built out-of-band, so CI must produce
       # them or the publish silently ships without them. ffmpeg is cross-built by
@@ -697,6 +715,26 @@ jobs:
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
 
+      # Firmware images are kept out of the public repos, and
+      # EnsureFirmwareBundle fails any credentialed publish that cannot find
+      # them, so pull firmware/ alone from the private workspace.
+      - name: fetch bundled firmware
+        uses: actions/checkout@v5
+        with:
+          repository: hello-nexus/nexus-dev
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+          sparse-checkout: firmware
+          path: .nexus-firmware
+          persist-credentials: false
+
+      - name: point the build at the firmware
+        run: |
+          if [ ! -d .nexus-firmware/firmware ]; then
+            echo "firmware/ missing from nexus-dev" >&2
+            exit 1
+          fi
+          echo "NEXUS_FIRMWARE_DIR=$PWD/.nexus-firmware/firmware" >> "$GITHUB_ENV"
+
       - name: AOT publish (linux-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
@@ -771,6 +809,26 @@ jobs:
           echo "::add-mask::$token"
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
+
+      # Firmware images are kept out of the public repos, and
+      # EnsureFirmwareBundle fails any credentialed publish that cannot find
+      # them, so pull firmware/ alone from the private workspace.
+      - name: fetch bundled firmware
+        uses: actions/checkout@v5
+        with:
+          repository: hello-nexus/nexus-dev
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+          sparse-checkout: firmware
+          path: .nexus-firmware
+          persist-credentials: false
+
+      - name: point the build at the firmware
+        run: |
+          if [ ! -d .nexus-firmware/firmware ]; then
+            echo "firmware/ missing from nexus-dev" >&2
+            exit 1
+          fi
+          echo "NEXUS_FIRMWARE_DIR=$PWD/.nexus-firmware/firmware" >> "$GITHUB_ENV"
 
       - name: build web
         working-directory: nexus-web
