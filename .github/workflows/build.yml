@@ -306,7 +306,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: hello-nexus/nexus-dev
-          token: ${{ secrets.SUBMODULES_TOKEN }}
+          token: ${{ secrets.FIRMWARE_REPO_TOKEN || secrets.SUBMODULES_TOKEN }}
           sparse-checkout: firmware
           path: .nexus-firmware
           persist-credentials: false
@@ -722,7 +722,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: hello-nexus/nexus-dev
-          token: ${{ secrets.SUBMODULES_TOKEN }}
+          token: ${{ secrets.FIRMWARE_REPO_TOKEN || secrets.SUBMODULES_TOKEN }}
           sparse-checkout: firmware
           path: .nexus-firmware
           persist-credentials: false
@@ -817,7 +817,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: hello-nexus/nexus-dev
-          token: ${{ secrets.SUBMODULES_TOKEN }}
+          token: ${{ secrets.FIRMWARE_REPO_TOKEN || secrets.SUBMODULES_TOKEN }}
           sparse-checkout: firmware
           path: .nexus-firmware
           persist-credentials: false
