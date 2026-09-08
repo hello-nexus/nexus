@@ -423,6 +423,35 @@ jobs:
           # whose hash it can't read from an author-published SHA256SUMS.
           gh release upload $tag nexus-service/installer/output/Nexus-Setup.exe nexus-service/installer/output/SHA256SUMS --clobber
 
+      # Mirror the offline installer to the R2 `builds` bucket at an immutable
+      # versioned key. The Microsoft Store listing points at this URL: an
+      # EXE/MSI submission needs a direct link whose bytes never change, and a
+      # GitHub release asset 302s to a short-lived signed URL that Partner
+      # Center rejects.
+      - name: mirror installer to R2
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          VERSION_INPUT: ${{ inputs.version }}
+        shell: pwsh
+        run: |
+          $tag = if ($env:VERSION_INPUT -ne '') { "v$($env:VERSION_INPUT)" } else { $env:GITHUB_REF_NAME }
+          $key = "installers/$tag/Nexus-Setup.exe"
+          aws s3api head-object --endpoint-url $env:ENDPOINT --bucket builds --key $key 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$key already exists; a published version is immutable. Skipping."
+            exit 0
+          }
+          aws s3api put-object --endpoint-url $env:ENDPOINT --bucket builds --key $key `
+            --body nexus-service/installer/output/Nexus-Setup.exe `
+            --content-type application/octet-stream `
+            --cache-control 'public, max-age=31536000, immutable'
+          if ($LASTEXITCODE -ne 0) { throw "R2 upload failed for $key" }
+          Write-Host "https://builds.hellonexus.com/$key"
+
   # The Windows WEB installers: payload-free Inno stubs that download the
   # current Nexus-Setup.exe at install time. Published to their own repo
   # (hello-nexus/nexus-installer, a release per StubVersion) so
