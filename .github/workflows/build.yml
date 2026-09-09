@@ -82,25 +82,44 @@ jobs:
 
       # The full parallel suite intermittently deadlocks on the runner (a
       # known-flaky, threadpool-starvation stall across unrelated async tests -
-      # passes on a re-run). --blame-hang-timeout aborts a wedged run in
-      # minutes instead of sitting out the 6h job timeout, and the retry lets a
-      # flaky roll recover; orphaned testhosts from an aborted attempt are
-      # swept first so they cannot wedge the next one.
+      # passes on a re-run), and the retry lets a flaky roll recover.
+      #
+      # `timeout` is the watchdog, NOT --blame-hang-timeout. Blame aborts a
+      # single TEST that overruns; what actually happens here is the runner
+      # going quiet BETWEEN tests, which blame does not see. Measured twice on
+      # 2026-09-09: once after a testhost crash at ~4,000 tests, once mid-suite
+      # after 7,163 passing tests, both silent for ~50 minutes with blame armed
+      # at 6m. An external kill is the only thing that reliably bounds it, so a
+      # stall now costs 8 minutes instead of an hour of runner time.
+      #
+      # The suite is ~45-90s when healthy, so 8m is ~6x headroom.
       - name: tests
         run: |
           set +e
           for attempt in 1 2 3; do
             echo "::group::test attempt $attempt"
-            dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false -p:BuildApps=false \
-              --logger "console;verbosity=normal" \
-              --blame-hang-timeout 6m --blame-hang-dump-type none
+            timeout --kill-after=30s 8m \
+              dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false -p:BuildApps=false \
+                --logger "console;verbosity=normal" \
+                --blame-hang-timeout 6m --blame-hang-dump-type none
             code=$?
             echo "::endgroup::"
             if [ $code -eq 0 ]; then exit 0; fi
-            echo "::warning::test attempt $attempt exited $code; sweeping testhosts and retrying"
+            if [ $code -eq 124 ] || [ $code -eq 137 ]; then
+              echo "::warning::test attempt $attempt hit the 8m watchdog; sweeping testhosts and retrying"
+            else
+              echo "::warning::test attempt $attempt exited $code; sweeping testhosts and retrying"
+            fi
+            # Sweep, then WAIT for the orphans to actually go. A retry that
+            # starts while a previous testhost still holds its test-server
+            # ports wedges the same way - that is how attempt 2 was lost on
+            # 2026-09-09, 5 seconds after a -9 sweep.
             pkill -9 -f testhost 2>/dev/null || true
             pkill -9 -f "dotnet test" 2>/dev/null || true
-            sleep 5
+            for _ in $(seq 1 30); do
+              pgrep -f testhost >/dev/null 2>&1 || break
+              sleep 1
+            done
           done
           echo "::error::tests failed after 3 attempts"
           exit 1
