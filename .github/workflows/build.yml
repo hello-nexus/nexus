@@ -178,17 +178,22 @@ jobs:
         run: npm ci
 
       # OpenRGB headless bundle - required by EnsureOpenRgbBundle in the csproj.
-      # openrgb-headless isn't wired as a real git submodule under nexus-rgb
-      # (the workspace keeps it as a sibling clone), so 'submodules: recursive'
-      # doesn't pull it. Clone it explicitly off the 'headless' branch tip.
+      # nexus-rgb now registers openrgb-headless as a submodule, so
+      # 'submodules: recursive' already checks it out at the pinned SHA. The
+      # clone is the fallback for a nexus-rgb pinned before that registration,
+      # where the workspace kept it as a sibling clone.
       - name: clone openrgb-headless
         env:
           GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
         shell: pwsh
         run: |
-          git clone --depth 1 --branch headless `
-            "https://x-access-token:$env:GIT_TOKEN@github.com/hello-nexus/openrgb-headless.git" `
-            nexus-rgb/openrgb-headless
+          if (Test-Path "nexus-rgb/openrgb-headless/.git") {
+            Write-Host "openrgb-headless already checked out as a submodule"
+          } else {
+            git clone --depth 1 --branch headless `
+              "https://x-access-token:$env:GIT_TOKEN@github.com/hello-nexus/openrgb-headless.git" `
+              nexus-rgb/openrgb-headless
+          }
 
       # Cache the build keyed by the openrgb-headless commit SHA so we only
       # rebuild when that source actually changes.
@@ -606,9 +611,14 @@ jobs:
         env:
           GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
         run: |
-          git clone --depth 1 --branch headless \
-            "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
-            nexus-rgb/openrgb-headless
+          # A submodule's .git is a file, not a directory, so test -e.
+          if [ -e nexus-rgb/openrgb-headless/.git ]; then
+            echo "openrgb-headless already checked out as a submodule"
+          else
+            git clone --depth 1 --branch headless \
+              "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
+              nexus-rgb/openrgb-headless
+          fi
 
       - name: resolve openrgb-headless SHA
         id: orgb-sha
@@ -842,9 +852,14 @@ jobs:
         env:
           GIT_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
         run: |
-          git clone --depth 1 --branch headless \
-            "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
-            nexus-rgb/openrgb-headless
+          # A submodule's .git is a file, not a directory, so test -e.
+          if [ -e nexus-rgb/openrgb-headless/.git ]; then
+            echo "openrgb-headless already checked out as a submodule"
+          else
+            git clone --depth 1 --branch headless \
+              "https://x-access-token:${GIT_TOKEN}@github.com/hello-nexus/openrgb-headless.git" \
+              nexus-rgb/openrgb-headless
+          fi
 
       - name: resolve openrgb-headless SHA
         id: orgb-sha
