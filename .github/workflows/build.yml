@@ -1009,17 +1009,28 @@ jobs:
             [ -n "$prev" ] && old=$(git ls-tree "$prev" "$path" 2>/dev/null | awk '{print $3}')
             [ "$old" = "$new" ] && continue
             name=$(basename "$path")
-            if ! { [ -n "$old" ] && git -C "$path" cat-file -e "${old}^{commit}" 2>/dev/null \
-                   && git -C "$path" cat-file -e "${new}^{commit}" 2>/dev/null; }; then
+            have() { git -C "$path" cat-file -e "${1}^{commit}" 2>/dev/null; }
+            if ! { [ -n "$old" ] && have "$old" && have "$new"; }; then
               git -C "$path" fetch -q --unshallow 2>/dev/null || git -C "$path" fetch -q 2>/dev/null || true
             fi
-            if [ -n "$old" ] && git -C "$path" cat-file -e "${old}^{commit}" 2>/dev/null \
-               && git -C "$path" cat-file -e "${new}^{commit}" 2>/dev/null; then
-              log=$(git -C "$path" log --no-merges --pretty='- %s' "${old}..${new}")
-            elif [ -z "$old" ]; then
+            # A force-push leaves the previous tag's SHA unreachable from any
+            # branch, so the default refspec above never brings it back; GitHub
+            # still serves it when asked for by name.
+            [ -n "$old" ] && ! have "$old" && git -C "$path" fetch -q origin "$old" 2>/dev/null || true
+            if [ -z "$old" ]; then
               log="- added"
-            else
+            elif ! have "$old" || ! have "$new"; then
               log="- updated"
+            elif git -C "$path" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
+              log=$(git -C "$path" log --no-merges --pretty='- %s' "${old}..${new}")
+            else
+              # History was rewritten between the releases, so old..new would
+              # list the whole new history. Commit dates survive a rewrite;
+              # bound the range by the previous release's commit time instead.
+              since=$(git -C "$path" show -s --format=%ct "$old")
+              log=$(git -C "$path" log --no-merges --pretty='- %s' \
+                --since="@$(( since + 1 ))" "$new")
+              echo "note: $name history rewritten since $prev; notes bounded by @$since"
             fi
             [ -n "$log" ] || continue
             { echo "### ${name}"; printf '%s\n\n' "$log"; } >> body.md
