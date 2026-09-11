@@ -92,6 +92,13 @@ Installer downloads are published as GitHub Releases on this repository. The
 in-app updater compares against the latest semver `vX.Y.Z` tag; prerelease tags
 (`vX.Y.Z-beta.N`) are the beta channel.
 
+## Linux recovery helper
+
+For missing motherboard fans, a missing Plasma tray icon, or Y70 panel/editor
+startup problems, see the optional [Linux recovery helper](scripts/linux-setup/README.md).
+It includes the fixes developed on a Plasma 6 / Wayland Y70 system, diagnostics,
+and an uninstall command. It is run manually and is not part of the installer.
+
 ## Building from source
 
 A build you make yourself is fully local: devices, lighting, cooling, panels,
