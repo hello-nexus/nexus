@@ -4,10 +4,6 @@ Thanks for your interest in Nexus. This repository is the umbrella: it pulls
 each component in as a git submodule and carries the cross-component CI. Each
 component is developed and documented in its own repository.
 
-> **Status:** the component repositories are being published and will be public
-> shortly. Until then, cloning the submodules and building locally requires
-> `hello-nexus` org access. You can still open issues here.
-
 ## Reporting issues
 
 - Bugs and feature requests: open an issue here using the templates.

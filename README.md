@@ -11,8 +11,6 @@
 
 </div>
 
-> **Going open source:** the component repositories linked below are private for now and will be published shortly. Until then, cloning the submodules and building locally requires `hello-nexus` org access.
-
 Nexus is a local-first hardware monitoring, control, RGB lighting and fan
 control suite for Windows, macOS, and Linux. A small native service runs on the
 machine, talks to the hardware, and serves a web dashboard you open in the
