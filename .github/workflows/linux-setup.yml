@@ -1,0 +1,21 @@
+name: Linux setup helper
+on:
+  pull_request:
+    paths: ['scripts/linux-setup/**', '.github/workflows/linux-setup.yml']
+  push:
+    paths: ['scripts/linux-setup/**', '.github/workflows/linux-setup.yml']
+permissions:
+  contents: read
+jobs:
+  isolated-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bash scripts/linux-setup/tests/static.sh
+      - run: bash scripts/linux-setup/tests/helper.sh
+      - run: node --test scripts/linux-setup/tests/simulator.test.cjs
