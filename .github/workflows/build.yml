@@ -388,6 +388,35 @@ jobs:
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -B build-ninja
           cmake --build build-ninja
 
+      # Game Sync capture shims (Razer Chroma / LightFX / Logitech, five per
+      # arch). The csproj bundles whatever sits in Bundled/win-x64/gamesync and
+      # the runtime tolerates an empty bundle, so without this step a release
+      # ships Game Sync as a game scanner that never receives a frame - which
+      # is what every release before this step did. The signing sweep later
+      # signs them like any other PE in the publish tree.
+      - name: build Game Sync shims (nexus-gamesync)
+        working-directory: nexus-gamesync
+        shell: cmd
+        run: |
+          call build.bat || exit /b 1
+          call build32.bat || exit /b 1
+
+      - name: stage Game Sync shims into the win-x64 bundle
+        shell: pwsh
+        run: |
+          $x64 = "nexus-service/Bundled/win-x64/gamesync/x64"
+          $x86 = "nexus-service/Bundled/win-x64/gamesync/x86"
+          New-Item -ItemType Directory $x64, $x86 -Force | Out-Null
+          Copy-Item nexus-gamesync/dist/*.dll $x64 -Force
+          Copy-Item nexus-gamesync/dist/x86/*.dll $x86 -Force
+          foreach ($n in "RzChromaSDK64.dll", "RzChromatic64.dll", "LightFX.dll", "LogitechLedEnginesWrapper.dll", "LogitechLed.dll") {
+            if (-not (Test-Path "$x64/$n")) { throw "shim missing: x64/$n" }
+          }
+          foreach ($n in "RzChromaSDK.dll", "RzChromatic.dll", "LightFX.dll", "LogitechLedEnginesWrapper.dll", "LogitechLed.dll") {
+            if (-not (Test-Path "$x86/$n")) { throw "shim missing: x86/$n" }
+          }
+          Get-ChildItem $x64, $x86 -File | Format-Table FullName, Length
+
       - name: verify win-x64 bundles (ffmpeg + vcam)
         shell: pwsh
         run: |
@@ -398,6 +427,14 @@ jobs:
       - name: AOT publish (win-x64)
         working-directory: nexus-service
         run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
+
+      # The publish copies the bundle to tools/gamesync; a silent drop here is
+      # exactly the failure this job used to ship.
+      - name: verify Game Sync shims in the publish tree
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem nexus-service/publish/tools/gamesync -Recurse -File -Include *.dll -ErrorAction SilentlyContinue).Count
+          if ($n -ne 10) { throw "expected 10 Game Sync shim DLLs under publish/tools/gamesync, found $n" }
 
       # OIDC: no stored secret. The federated credential trusts this repo's
       # release-signing environment; the SP holds the Artifact Signing Certificate
