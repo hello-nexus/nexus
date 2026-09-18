@@ -326,6 +326,12 @@ jobs:
           Write-Host "::add-mask::$token"
           "NEXUS_CLIENT_TOKEN=$token" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # An absent Klipy key ships a GIF picker that can only say "no key
+          # configured" (3.0.15), so refuse the publish instead.
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.NEXUS_KLIPY_KEY }}")) {
+            throw "NEXUS_KLIPY_KEY secret is not set"
+          }
+          "NEXUS_KLIPY_KEY=${{ secrets.NEXUS_KLIPY_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # Firmware images are kept out of the public repos, and
       # EnsureFirmwareBundle fails any credentialed publish that cannot find
@@ -777,6 +783,11 @@ jobs:
           echo "::add-mask::$token"
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
+          if [ -z "${{ secrets.NEXUS_KLIPY_KEY }}" ]; then
+            echo "NEXUS_KLIPY_KEY secret is not set" >&2
+            exit 1
+          fi
+          echo "NEXUS_KLIPY_KEY=${{ secrets.NEXUS_KLIPY_KEY }}" >> "$GITHUB_ENV"
 
       # Firmware images are kept out of the public repos, and
       # EnsureFirmwareBundle fails any credentialed publish that cannot find
@@ -872,6 +883,11 @@ jobs:
           echo "::add-mask::$token"
           echo "NEXUS_CLIENT_TOKEN=$token" >> "$GITHUB_ENV"
           echo "NEXUS_POSTHOG_KEY=${{ secrets.NEXUS_POSTHOG_KEY }}" >> "$GITHUB_ENV"
+          if [ -z "${{ secrets.NEXUS_KLIPY_KEY }}" ]; then
+            echo "NEXUS_KLIPY_KEY secret is not set" >&2
+            exit 1
+          fi
+          echo "NEXUS_KLIPY_KEY=${{ secrets.NEXUS_KLIPY_KEY }}" >> "$GITHUB_ENV"
 
       # Firmware images are kept out of the public repos, and
       # EnsureFirmwareBundle fails any credentialed publish that cannot find
