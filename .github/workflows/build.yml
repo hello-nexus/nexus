@@ -416,25 +416,6 @@ jobs:
           }
           Get-ChildItem $x64, $x86 -File | Format-Table FullName, Length
 
-      - name: verify win-x64 bundles (ffmpeg + vcam)
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe")) { throw "ffmpeg.exe missing" }
-          if (-not (Test-Path "nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll")) { throw "NexusVCam.dll missing" }
-          Get-Item nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe, nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll | Format-Table Name, Length
-
-      - name: AOT publish (win-x64)
-        working-directory: nexus-service
-        run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
-
-      # The publish copies the bundle to tools/gamesync; a silent drop here is
-      # exactly the failure this job used to ship.
-      - name: verify Game Sync shims in the publish tree
-        shell: pwsh
-        run: |
-          $n = @(Get-ChildItem nexus-service/publish/tools/gamesync -Recurse -File -Include *.dll -ErrorAction SilentlyContinue).Count
-          if ($n -ne 10) { throw "expected 10 Game Sync shim DLLs under publish/tools/gamesync, found $n" }
-
       # OIDC: no stored secret. The federated credential trusts this repo's
       # release-signing environment; the SP holds the Artifact Signing Certificate
       # Profile Signer role on the signing account.
@@ -445,9 +426,6 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: install Inno Setup
-        run: choco install innosetup --no-progress -y
-
       # The dlib ships in the Microsoft.Trusted.Signing.Client NuGet package;
       # signtool comes from the runner's Windows SDK (build-installer.ps1
       # auto-probes it). Auth is the ambient AzureCliCredential from the
@@ -457,6 +435,51 @@ jobs:
       - name: install Artifact Signing client (dlib)
         shell: pwsh
         run: nuget install Microsoft.Trusted.Signing.Client -Version ${{ env.TRUSTED_SIGNING_CLIENT_VERSION }} -OutputDirectory "${{ runner.temp }}\signing"
+
+      # The secondary-monitor display driver. Its catalog hashes the signed DLL and
+      # host, so the package is signed here, before the publish: the installer's
+      # signing sweep then finds both already signed and leaves the catalog valid.
+      # Skipped for a pinned nexus-service that predates the driver.
+      - name: build Nexus Virtual Display driver (signed)
+        if: hashFiles('nexus-service/Bundled/windows/nexus-vdd/build.ps1') != ''
+        working-directory: nexus-service
+        run: powershell -File Bundled/windows/nexus-vdd/build.ps1 -Sign -DlibPath "${{ runner.temp }}\signing\Microsoft.Trusted.Signing.Client.${{ env.TRUSTED_SIGNING_CLIENT_VERSION }}\bin\x64\Azure.CodeSigning.Dlib.dll"
+
+      - name: verify win-x64 bundles (ffmpeg + vcam + vdd)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe")) { throw "ffmpeg.exe missing" }
+          if (-not (Test-Path "nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll")) { throw "NexusVCam.dll missing" }
+          Get-Item nexus-service/Bundled/win-x64/ffmpeg/ffmpeg.exe, nexus-service/Bundled/windows/nexus-vcam/build-ninja/NexusVCam.dll | Format-Table Name, Length
+          if (Test-Path "nexus-service/Bundled/windows/nexus-vdd/build.ps1") {
+            $vdd = "nexus-service/Bundled/win-x64/vdd"
+            foreach ($n in "NexusVirtualDisplay.dll", "NexusVirtualDisplay.inf", "nexusvirtualdisplay.cat", "NexusVirtualDisplayHost.exe") {
+              if (-not (Test-Path "$vdd/$n")) { throw "driver package missing $n" }
+            }
+            foreach ($n in "NexusVirtualDisplay.dll", "nexusvirtualdisplay.cat", "NexusVirtualDisplayHost.exe") {
+              if ((Get-AuthenticodeSignature "$vdd/$n").Status -ne 'Valid') { throw "driver package $n is not validly signed" }
+            }
+            Get-ChildItem $vdd | Format-Table Name, Length
+          }
+
+      - name: AOT publish (win-x64)
+        working-directory: nexus-service
+        run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
+
+      # The publish copies the bundle to tools/gamesync; a silent drop here is
+      # exactly the failure this job used to ship.
+      - name: verify Game Sync shims and driver package in the publish tree
+        shell: pwsh
+        run: |
+          $n = @(Get-ChildItem nexus-service/publish/tools/gamesync -Recurse -File -Include *.dll -ErrorAction SilentlyContinue).Count
+          if ($n -ne 10) { throw "expected 10 Game Sync shim DLLs under publish/tools/gamesync, found $n" }
+          if (Test-Path "nexus-service/Bundled/windows/nexus-vdd/build.ps1") {
+            $n = @(Get-ChildItem nexus-service/publish/vdd -File -ErrorAction SilentlyContinue).Count
+            if ($n -ne 4) { throw "expected 4 driver package files under publish/vdd, found $n" }
+          }
+
+      - name: install Inno Setup
+        run: choco install innosetup --no-progress -y
 
       # build-installer.ps1 -Sign signs the whole image Smart App Control
       # checks: every unsigned PE in the publish tree (bundled third-party
