@@ -89,14 +89,16 @@ jobs:
 
           # The CI 'release-notes' job rewrites the body last, replacing GitHub's
           # interim --generate-notes body (which has '## What's Changed' h2
-          # sections) with one '### <submodule>' h3 section per changed repo (or a
-          # '_No submodule changes_' fallback). Wait for that h3/fallback marker -
+          # sections) with the committed written notes ('## Highlights') or one
+          # '### <submodule>' h3 section per changed repo (or a '_No submodule
+          # changes_' fallback). Wait for one of those markers -
           # NOT 'Full Changelog', which --generate-notes also emits. Manual
           # releases never produce it, so fall through after the grace.
           notes_deadline=$(( $(date +%s) + 5*60 ))
           while [ "$(date +%s)" -lt "$notes_deadline" ]; do
             body=$(gh_api "repos/${REPO}/releases/tags/${TAG}" --jq '.body // ""')
             if printf '%s' "$body" | grep -qE '^###[[:space:]]' \
+               || printf '%s' "$body" | grep -qE '^## Highlights' \
                || printf '%s' "$body" | grep -qF 'No submodule changes'; then
               break
             fi

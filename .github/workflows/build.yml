@@ -1074,9 +1074,10 @@ jobs:
             || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
 
-  # Rewrite the release body from the submodule commits (the per-repo changes),
-  # skipping the umbrella's own bump/CI commits. Runs after the build jobs have
-  # created the release; on failure the release keeps the --generate-notes body.
+  # Rewrite the release body from the committed release-notes/<tag>.md, else
+  # from the submodule commits (the per-repo changes), skipping the umbrella's
+  # own bump/CI commits. Runs after the build jobs have created the release; on
+  # failure the release keeps the --generate-notes body.
   release-notes:
     needs: [nexus-installer-windows, nexus-linux, nexus-macos]
     if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
@@ -1089,7 +1090,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           token: ${{ secrets.SUBMODULES_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: compose notes from submodule commits
+      - name: compose release notes
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
@@ -1133,6 +1134,13 @@ jobs:
             { echo "### ${name}"; printf '%s\n\n' "$log"; } >> body.md
           done < <(git config -f .gitmodules --get-regexp path | awk '{print $2}')
           [ -s body.md ] || printf '_No submodule changes since %s._\n\n' "${prev:-the previous release}" >> body.md
+          # Written notes win: release-notes/<tag>.md is committed with the
+          # pointer bump before dispatch and replaces the commit list. The
+          # in-app update notes render this body with a minimal markdown
+          # parser, so the list stays out; Full Changelog still links to it.
+          if [ -s "release-notes/${tag}.md" ]; then
+            { cat "release-notes/${tag}.md"; printf '\n\n'; } > body.md
+          fi
           [ -n "$prev" ] && printf '**Full Changelog**: %s/%s/compare/%s...%s\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$tag" >> body.md
           echo "----- body.md -----"; cat body.md
