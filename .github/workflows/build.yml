@@ -396,7 +396,12 @@ jobs:
       - name: build Game Sync shims (nexus-gamesync)
         working-directory: nexus-gamesync
         shell: cmd
+        # build.bat runs vcvarsall itself; on top of the DevShell PATH exported
+        # above that overflows cmd's line-length limit ("The input line is too
+        # long"), so start from the pre-DevShell PATH.
         run: |
+          if not defined __VSCMD_PREINIT_PATH ( echo NO_PREINIT_PATH & exit /b 1 )
+          set "PATH=%__VSCMD_PREINIT_PATH%"
           call build.bat || exit /b 1
           call build32.bat || exit /b 1
 
