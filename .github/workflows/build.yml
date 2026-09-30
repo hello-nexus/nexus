@@ -1074,6 +1074,40 @@ jobs:
             || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
           gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
 
+  # One SHA256SUMS for every installer this run built. The OTA updater installs
+  # only an asset whose hash it reads from SHA256SUMS, and the Windows job's
+  # copy lists Nexus-Setup.exe alone. Hashes the runner-built artifacts, the
+  # bytes the jobs above uploaded to the release.
+  release-checksums:
+    needs: [nexus-installer-windows, nexus-linux, nexus-macos]
+    if: ${{ !cancelled() && inputs.build_installer && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: Nexus-*
+          path: installers
+          merge-multiple: true
+
+      - name: publish SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION_INPUT: ${{ inputs.version }}
+        working-directory: installers
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
+          files=()
+          for f in Nexus-Setup.exe Nexus-Linux-x64.tar.gz Nexus.dmg; do
+            [ -f "$f" ] && files+=("$f")
+          done
+          if [ ${#files[@]} -eq 0 ]; then echo "no installers built; skipping"; exit 0; fi
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$tag" SHA256SUMS --clobber
+
   # Rewrite the release body from the committed release-notes/<tag>.md, else
   # from the submodule commits (the per-repo changes), skipping the umbrella's
   # own bump/CI commits. Runs after the build jobs have created the release; on
