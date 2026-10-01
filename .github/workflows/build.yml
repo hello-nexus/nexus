@@ -23,6 +23,10 @@ on:
         description: 'Build + sign the Windows web installers (Nexus-Installer.exe, Nexus-Installer-Beta.exe) and publish them to hello-nexus/nexus-installer. Only after installer/bootstrap changed: their bytes are reused across releases.'
         type: boolean
         default: false
+      dev_tools:
+        description: 'Internal Windows build with dev tools on, version X.Y.Z-dev.N. Never publishes: the installer is uploaded only as an encrypted artifact.'
+        type: boolean
+        default: false
 
 # Force actions/* to run on Node 24 instead of the deprecated Node 20.
 env:
@@ -155,6 +159,21 @@ jobs:
       id-token: write
       contents: write
     steps:
+      # A dev-tools build must never reach a public path: no tag, no web
+      # installers, a -dev.N version, and a key to encrypt the artifact with.
+      - name: dev-tools guard
+        if: ${{ inputs.dev_tools }}
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          WEB_INSTALLERS: ${{ inputs.web_installers }}
+          ARTIFACT_KEY: ${{ secrets.DEV_BUILD_ARTIFACT_KEY }}
+        run: |
+          case "$GITHUB_REF" in refs/tags/*) echo "dev_tools refuses a tag ref" >&2; exit 1;; esac
+          [ "$WEB_INSTALLERS" != "true" ] || { echo "dev_tools refuses web_installers" >&2; exit 1; }
+          [[ "$VERSION_INPUT" =~ ^[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$ ]] || { echo "dev_tools needs version X.Y.Z-dev.N, got '$VERSION_INPUT'" >&2; exit 1; }
+          [ -n "$ARTIFACT_KEY" ] || { echo "DEV_BUILD_ARTIFACT_KEY secret is not set" >&2; exit 1; }
+
       - uses: actions/checkout@v5
         with:
           submodules: recursive
@@ -469,7 +488,9 @@ jobs:
 
       - name: AOT publish (win-x64)
         working-directory: nexus-service
-        run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish
+        env:
+          DEV_TOOLS: ${{ inputs.dev_tools && '1' || '' }}
+        run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish ${{ inputs.dev_tools && '-p:DevTools=true' || '' }}
 
       # The publish copies the bundle to tools/gamesync; a silent drop here is
       # exactly the failure this job used to ship.
@@ -515,14 +536,37 @@ jobs:
           Write-Host "Smart App Control gate: publish tree + Nexus-Setup.exe fully signed."
 
       - name: upload installer artifact
+        if: ${{ !inputs.dev_tools }}
         uses: actions/upload-artifact@v7
         with:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
           retention-days: 1
 
+      # This repo is public, so its artifacts are downloadable by any signed-in
+      # user: a dev-tools installer leaves the runner only encrypted.
+      - name: encrypt dev-tools installer
+        if: ${{ inputs.dev_tools }}
+        shell: bash
+        env:
+          ARTIFACT_KEY: ${{ secrets.DEV_BUILD_ARTIFACT_KEY }}
+        run: |
+          out=nexus-service/installer/output
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_KEY \
+            -in "$out/Nexus-Setup.exe" -out "$out/Nexus-Setup-dev.exe.enc"
+          sha256sum "$out/Nexus-Setup.exe"
+          rm "$out/Nexus-Setup.exe"
+
+      - name: upload encrypted dev-tools installer
+        if: ${{ inputs.dev_tools }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nexus-Setup-Windows-dev-encrypted
+          path: nexus-service/installer/output/Nexus-Setup-dev.exe.enc
+          retention-days: 1
+
       - name: publish release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && !inputs.dev_tools }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
@@ -546,7 +590,7 @@ jobs:
       # GitHub release asset 302s to a short-lived signed URL that Partner
       # Center rejects.
       - name: mirror installer to R2
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && !inputs.dev_tools }}
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -579,7 +623,7 @@ jobs:
   # nexus-installer-windows.
   nexus-web-installers:
     runs-on: windows-latest
-    if: ${{ inputs.web_installers }}
+    if: ${{ inputs.web_installers && !inputs.dev_tools }}
     env:
       TRUSTED_SIGNING_CLIENT_VERSION: '1.0.95'
       OUT: nexus-service/installer/output
@@ -673,7 +717,7 @@ jobs:
     needs: [nexus-web, nexus-service]
     # Opt-in only (same gate as the Windows installer): builds OpenRGB headless +
     # AOT-publishes + packages the Linux tarball.
-    if: ${{ inputs.build_installer }}
+    if: ${{ inputs.build_installer && !inputs.dev_tools }}
     permissions:
       contents: write
     steps:
@@ -853,7 +897,7 @@ jobs:
           retention-days: 1
 
       - name: publish release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && !inputs.dev_tools }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
@@ -880,7 +924,7 @@ jobs:
     # osx-arm64 AOT app, signs it Developer ID + hardened runtime, notarizes,
     # staples, and packages Nexus.dmg. The camera system extension is omitted
     # (NEXUS_SKIP_CAMERA_EXTENSION) because CI can't provision it headlessly.
-    if: ${{ inputs.build_installer }}
+    if: ${{ inputs.build_installer && !inputs.dev_tools }}
     permissions:
       contents: write
     steps:
@@ -1061,7 +1105,7 @@ jobs:
           retention-days: 1
 
       - name: publish release (tag or version input)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.version != '' }}
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && !inputs.dev_tools }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
@@ -1080,7 +1124,7 @@ jobs:
   # bytes the jobs above uploaded to the release.
   release-checksums:
     needs: [nexus-installer-windows, nexus-linux, nexus-macos]
-    if: ${{ !cancelled() && inputs.build_installer && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
+    if: ${{ !cancelled() && inputs.build_installer && !inputs.dev_tools && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -1114,7 +1158,7 @@ jobs:
   # failure the release keeps the --generate-notes body.
   release-notes:
     needs: [nexus-installer-windows, nexus-linux, nexus-macos]
-    if: ${{ !cancelled() && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
+    if: ${{ !cancelled() && !inputs.dev_tools && (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

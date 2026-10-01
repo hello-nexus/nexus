@@ -25,6 +25,10 @@ on:
         description: 'Build + sign the Windows web installers and publish them to hello-nexus/nexus-installer (only after installer/bootstrap changed)'
         type: boolean
         default: false
+      dev_tools:
+        description: 'Internal Windows build with dev tools on (version X.Y.Z-dev.N). Never publishes; the installer is an encrypted artifact.'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -37,4 +41,5 @@ jobs:
       build_installer: ${{ inputs.build_installer || false }}
       prerelease: ${{ inputs.prerelease || false }}
       web_installers: ${{ inputs.web_installers || false }}
+      dev_tools: ${{ inputs.dev_tools || false }}
     secrets: inherit
