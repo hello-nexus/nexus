@@ -490,6 +490,9 @@ jobs:
         working-directory: nexus-service
         env:
           DEV_TOOLS: ${{ inputs.dev_tools && '1' || '' }}
+          # nexus-web writes hidden sourcemaps to nexus-web/sourcemaps (never
+          # into the shipped dist) for the upload below.
+          WEB_SOURCEMAPS: ${{ !inputs.dev_tools && '1' || '' }}
         run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish ${{ inputs.dev_tools && '-p:DevTools=true' || '' }}
 
       # The publish copies the bundle to tools/gamesync; a silent drop here is
@@ -542,6 +545,29 @@ jobs:
           name: Nexus-Setup-Windows
           path: nexus-service/installer/output/Nexus-Setup.exe
           retention-days: 1
+
+      # Symbolicates web error reports (nexus-dev scripts/symbolicate-web.mjs).
+      # Paths and mappings only: nexus-web's build strips source text and fails
+      # on any file outside that public repo. Retention must outlive nexus-api's
+      # error retention; warn, not error, so a build of an older nexus-web still
+      # ships. macOS and Linux build their own bundles, so their stacks may not
+      # match these maps.
+      - name: resolve nexus-web SHA
+        if: ${{ !inputs.dev_tools }}
+        id: websha
+        shell: pwsh
+        run: |
+          $sha = (git -C nexus-web rev-parse HEAD).Trim()
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: upload web sourcemaps
+        if: ${{ !inputs.dev_tools }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-sourcemaps-${{ steps.websha.outputs.sha }}
+          path: nexus-web/sourcemaps
+          retention-days: 90
+          if-no-files-found: warn
 
       # This repo is public, so its artifacts are downloadable by any signed-in
       # user: a dev-tools installer leaves the runner only encrypted.
