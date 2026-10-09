@@ -21,6 +21,10 @@ on:
         description: 'Mark the release as a prerelease (beta channel)'
         type: boolean
         default: false
+      draft:
+        description: 'Create the release as a draft; publish it later with gh release edit --draft=false (a stable and its matching beta go public seconds apart)'
+        type: boolean
+        default: false
       web_installers:
         description: 'Build + sign the Windows web installers and publish them to hello-nexus/nexus-installer (only after installer/bootstrap changed)'
         type: boolean
@@ -40,6 +44,7 @@ jobs:
       version: ${{ inputs.version || '' }}
       build_installer: ${{ inputs.build_installer || false }}
       prerelease: ${{ inputs.prerelease || false }}
+      draft: ${{ inputs.draft || false }}
       web_installers: ${{ inputs.web_installers || false }}
       dev_tools: ${{ inputs.dev_tools || false }}
     secrets: inherit

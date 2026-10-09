@@ -19,6 +19,10 @@ on:
         description: 'Mark the release as a prerelease (beta channel)'
         type: boolean
         default: false
+      draft:
+        description: 'Create the release as a draft; publish it later with gh release edit --draft=false (a stable and its matching beta go public seconds apart)'
+        type: boolean
+        default: false
       web_installers:
         description: 'Build + sign the Windows web installers (Nexus-Installer.exe, Nexus-Installer-Beta.exe) and publish them to hello-nexus/nexus-installer. Only after installer/bootstrap changed: their bytes are reused across releases.'
         type: boolean
@@ -42,6 +46,22 @@ jobs:
       run:
         working-directory: nexus-web
     steps:
+      # A published release's track must match its version: a stable OTA client
+      # reads /releases/latest and a beta client reads prereleases only, so a
+      # mislabelled release lands on the wrong track. prerelease defaults to false.
+      - name: release track guard
+        if: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.version != '') && !inputs.dev_tools }}
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ -n "$VERSION_INPUT" ]; then v="$VERSION_INPUT"; else v="${GITHUB_REF_NAME#v}"; fi
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "version '$v' is not X.Y.Z[-pre]" >&2; exit 1; }
+          if [[ "$v" == *-* && "$PRERELEASE" != "true" ]]; then echo "$v is a prerelease version: dispatch with prerelease=true" >&2; exit 1; fi
+          if [[ "$v" != *-* && "$PRERELEASE" == "true" ]]; then echo "$v is a stable version: dispatch with prerelease=false" >&2; exit 1; fi
+
       - uses: actions/checkout@v5
         with:
           submodules: recursive
@@ -597,6 +617,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
         shell: pwsh
         run: |
           $tag = if ($env:VERSION_INPUT -ne '') { "v$($env:VERSION_INPUT)" } else { $env:GITHUB_REF_NAME }
@@ -604,6 +625,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             $a = @($tag, '--title', $tag, '--generate-notes', '--target', $env:GITHUB_SHA)
             if ($env:PRERELEASE -eq 'true') { $a += '--prerelease' }
+            if ($env:DRAFT -eq 'true') { $a += '--draft' }
             gh release create @a
           }
           # SHA256SUMS is required: the OTA auto-stage path refuses a release
@@ -928,12 +950,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
           pre=""
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+          draft=""
+          [ "$DRAFT" = "true" ] && draft="--draft"
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
+            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre $draft
           gh release upload "$tag" nexus-service/installer/output/Nexus-Linux-x64.tar.gz --clobber
 
   nexus-macos:
@@ -1136,12 +1161,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION_INPUT: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          DRAFT: ${{ inputs.draft }}
         run: |
           if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
           pre=""
           [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+          draft=""
+          [ "$DRAFT" = "true" ] && draft="--draft"
           gh release view "$tag" >/dev/null 2>&1 \
-            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre
+            || gh release create "$tag" --title "$tag" --generate-notes --target "$GITHUB_SHA" $pre $draft
           gh release upload "$tag" nexus-service/installer/output/Nexus.dmg --clobber
 
   # One SHA256SUMS for every installer this run built. The OTA updater installs
@@ -1256,6 +1284,9 @@ jobs:
       # release. Post directly from this job instead (it runs last, after assets
       # + composed notes). Manual human releases still go via discord-release.yml.
       - name: announce in Discord
+        # A draft is announced when it is published by hand: that fires
+        # 'release: published', which discord-release.yml handles.
+        if: ${{ !inputs.draft }}
         env:
           GH_TOKEN: ${{ github.token }}
           WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
