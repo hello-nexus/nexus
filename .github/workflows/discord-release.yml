@@ -32,13 +32,12 @@ jobs:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
           RELEASE_URL: ${{ github.event.release.html_url }}
           PRERELEASE: ${{ github.event.release.prerelease }}
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Betas post to #beta-releases, production releases to #releases.
+          BETA_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASES_WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
         run: |
           set -euo pipefail
 
-          if [ -z "${WEBHOOK:-}" ]; then
-            echo "::error::DISCORD_WEBHOOK_URL secret is not set"; exit 1
-          fi
           if [ -z "${TAG:-}" ]; then
             echo "::error::no release tag to announce"; exit 1
           fi
@@ -58,6 +57,15 @@ jobs:
             rel=$(gh_api "repos/${REPO}/releases/tags/${TAG}")
             RELEASE_URL=$(printf '%s' "$rel" | jq -r '.html_url')
             PRERELEASE=$(printf '%s' "$rel" | jq -r '.prerelease')
+          fi
+
+          if [ "${PRERELEASE}" = "true" ]; then
+            WEBHOOK="$BETA_WEBHOOK"; secret=DISCORD_WEBHOOK_URL
+          else
+            WEBHOOK="$RELEASES_WEBHOOK"; secret=DISCORD_RELEASES_WEBHOOK_URL
+          fi
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "::error::${secret} secret is not set"; exit 1
           fi
 
           # Every release MUST carry both per-OS binaries and SHA256SUMS (AGENTS

@@ -1258,12 +1258,15 @@ jobs:
       - name: announce in Discord
         env:
           GH_TOKEN: ${{ github.token }}
-          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # Betas post to #beta-releases, production releases to #releases.
+          BETA_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASES_WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
           VERSION_INPUT: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -uo pipefail
-          if [ -z "${WEBHOOK:-}" ]; then echo "no DISCORD_WEBHOOK_URL; skipping"; exit 0; fi
+          if [ "${PRERELEASE}" = "true" ]; then WEBHOOK="$BETA_WEBHOOK"; else WEBHOOK="$RELEASES_WEBHOOK"; fi
+          if [ -z "${WEBHOOK:-}" ]; then echo "no Discord webhook for this release track; skipping"; exit 0; fi
           if [ -n "$VERSION_INPUT" ]; then tag="v$VERSION_INPUT"; else tag="$GITHUB_REF_NAME"; fi
           # The job runs on !cancelled(), i.e. even when an installer job failed.
           # Only announce a release that was actually published.
