@@ -568,26 +568,32 @@ jobs:
 
       # Symbolicates web error reports (nexus-dev scripts/symbolicate-web.mjs).
       # Paths and mappings only: nexus-web's build strips source text and fails
-      # on any file outside that public repo. Retention must outlive nexus-api's
-      # error retention; warn, not error, so a build of an older nexus-web still
-      # ships. macOS and Linux build their own bundles, so their stacks may not
-      # match these maps.
-      - name: resolve nexus-web SHA
+      # on any file outside that public repo, so the public bucket exposes
+      # nothing new. Each platform job builds its own bundle and stores its own
+      # maps; chunk names are content hashes, so a name two jobs share holds the
+      # same code. Warn, never fail: a build of an older nexus-web, or a caller
+      # without the R2 secrets, still ships.
+      - name: store web sourcemaps
         if: ${{ !inputs.dev_tools }}
-        id: websha
-        shell: pwsh
+        continue-on-error: true
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
         run: |
-          $sha = (git -C nexus-web rev-parse HEAD).Trim()
-          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: upload web sourcemaps
-        if: ${{ !inputs.dev_tools }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: web-sourcemaps-${{ steps.websha.outputs.sha }}
-          path: nexus-web/sourcemaps
-          retention-days: 90
-          if-no-files-found: warn
+          if [ ! -d nexus-web/sourcemaps/assets ]; then
+            echo "::warning::nexus-web wrote no sourcemaps"; exit 0
+          fi
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::warning::no R2 credentials, web sourcemaps not stored"; exit 0
+          fi
+          sha=$(git -C nexus-web rev-parse HEAD)
+          aws s3 cp nexus-web/sourcemaps "s3://builds/symbols/web/$sha/" --recursive --only-show-errors \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --content-type application/json --cache-control 'public, max-age=31536000, immutable'
+          echo "https://builds.hellonexus.com/symbols/web/$sha/"
 
       # This repo is public, so its artifacts are downloadable by any signed-in
       # user: a dev-tools installer leaves the runner only encrypted.
@@ -931,7 +937,32 @@ jobs:
 
       - name: AOT publish (linux-x64)
         working-directory: nexus-service
+        env:
+          # Hidden sourcemaps go to nexus-web/sourcemaps, never the shipped dist.
+          WEB_SOURCEMAPS: '1'
         run: dotnet publish Nexus.Service.csproj -c Release -r linux-x64 -o publish
+
+      # Same as the Windows job's step; this job's bundle is built separately.
+      - name: store web sourcemaps
+        continue-on-error: true
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          if [ ! -d nexus-web/sourcemaps/assets ]; then
+            echo "::warning::nexus-web wrote no sourcemaps"; exit 0
+          fi
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::warning::no R2 credentials, web sourcemaps not stored"; exit 0
+          fi
+          sha=$(git -C nexus-web rev-parse HEAD)
+          aws s3 cp nexus-web/sourcemaps "s3://builds/symbols/web/$sha/" --recursive --only-show-errors \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --content-type application/json --cache-control 'public, max-age=31536000, immutable'
+          echo "https://builds.hellonexus.com/symbols/web/$sha/"
 
       - name: package tarball
         working-directory: nexus-service
@@ -1034,10 +1065,35 @@ jobs:
 
       - name: build web
         working-directory: nexus-web
+        env:
+          # Hidden sourcemaps go to nexus-web/sourcemaps, never the shipped dist.
+          WEB_SOURCEMAPS: '1'
         run: |
           npm ci
           (cd sdk && npm ci)
           npm run build:service
+
+      # Same as the Windows job's step; this job's bundle is built separately.
+      - name: store web sourcemaps
+        continue-on-error: true
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          if [ ! -d nexus-web/sourcemaps/assets ]; then
+            echo "::warning::nexus-web wrote no sourcemaps"; exit 0
+          fi
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::warning::no R2 credentials, web sourcemaps not stored"; exit 0
+          fi
+          sha=$(git -C nexus-web rev-parse HEAD)
+          aws s3 cp nexus-web/sourcemaps "s3://builds/symbols/web/$sha/" --recursive --only-show-errors \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --content-type application/json --cache-control 'public, max-age=31536000, immutable'
+          echo "https://builds.hellonexus.com/symbols/web/$sha/"
 
       # OpenRGB headless bundle (osx-arm64). Sibling clone, like the other jobs.
       - name: clone openrgb-headless
