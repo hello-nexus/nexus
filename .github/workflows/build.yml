@@ -426,40 +426,6 @@ jobs:
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -B build-ninja
           cmake --build build-ninja
 
-      # Game Sync capture shims (Razer Chroma / LightFX / Logitech, five per
-      # arch). The csproj bundles whatever sits in Bundled/win-x64/gamesync and
-      # the runtime tolerates an empty bundle, so without this step a release
-      # ships Game Sync as a game scanner that never receives a frame - which
-      # is what every release before this step did. The signing sweep later
-      # signs them like any other PE in the publish tree.
-      - name: build Game Sync shims (nexus-gamesync)
-        working-directory: nexus-gamesync
-        shell: cmd
-        # build.bat runs vcvarsall itself; on top of the DevShell PATH exported
-        # above that overflows cmd's line-length limit ("The input line is too
-        # long"), so start from the pre-DevShell PATH.
-        run: |
-          if not defined __VSCMD_PREINIT_PATH ( echo NO_PREINIT_PATH & exit /b 1 )
-          set "PATH=%__VSCMD_PREINIT_PATH%"
-          call build.bat || exit /b 1
-          call build32.bat || exit /b 1
-
-      - name: stage Game Sync shims into the win-x64 bundle
-        shell: pwsh
-        run: |
-          $x64 = "nexus-service/Bundled/win-x64/gamesync/x64"
-          $x86 = "nexus-service/Bundled/win-x64/gamesync/x86"
-          New-Item -ItemType Directory $x64, $x86 -Force | Out-Null
-          Copy-Item nexus-gamesync/dist/*.dll $x64 -Force
-          Copy-Item nexus-gamesync/dist/x86/*.dll $x86 -Force
-          foreach ($n in "RzChromaSDK64.dll", "RzChromatic64.dll", "LightFX.dll", "LogitechLedEnginesWrapper.dll", "LogitechLed.dll") {
-            if (-not (Test-Path "$x64/$n")) { throw "shim missing: x64/$n" }
-          }
-          foreach ($n in "RzChromaSDK.dll", "RzChromatic.dll", "LightFX.dll", "LogitechLedEnginesWrapper.dll", "LogitechLed.dll") {
-            if (-not (Test-Path "$x86/$n")) { throw "shim missing: x86/$n" }
-          }
-          Get-ChildItem $x64, $x86 -File | Format-Table FullName, Length
-
       # OIDC: no stored secret. The federated credential trusts this repo's
       # release-signing environment; the SP holds the Artifact Signing Certificate
       # Profile Signer role on the signing account.
@@ -515,13 +481,9 @@ jobs:
           WEB_SOURCEMAPS: ${{ !inputs.dev_tools && '1' || '' }}
         run: dotnet publish Nexus.Service.csproj -c Release -r win-x64 -o publish ${{ inputs.dev_tools && '-p:DevTools=true' || '' }}
 
-      # The publish copies the bundle to tools/gamesync; a silent drop here is
-      # exactly the failure this job used to ship.
-      - name: verify Game Sync shims and driver package in the publish tree
+      - name: verify driver package in the publish tree
         shell: pwsh
         run: |
-          $n = @(Get-ChildItem nexus-service/publish/tools/gamesync -Recurse -File -Include *.dll -ErrorAction SilentlyContinue).Count
-          if ($n -ne 10) { throw "expected 10 Game Sync shim DLLs under publish/tools/gamesync, found $n" }
           if (Test-Path "nexus-service/Bundled/windows/nexus-vdd/build.ps1") {
             $n = @(Get-ChildItem nexus-service/publish/vdd -File -ErrorAction SilentlyContinue).Count
             if ($n -ne 4) { throw "expected 4 driver package files under publish/vdd, found $n" }

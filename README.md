@@ -33,7 +33,6 @@ repository and documented by its own `README`.
 | [`nexus-web`](https://github.com/hello-nexus/nexus-web) | The React + TypeScript dashboard, served by the service. |
 | [`nexus-overlay`](https://github.com/hello-nexus/nexus-overlay) | The desktop / in-game overlay. |
 | [`nexus-rgb`](https://github.com/hello-nexus/nexus-rgb) | OpenRGB-headless workspace; provides the RGB device backends. |
-| [`nexus-gamesync`](https://github.com/hello-nexus/nexus-gamesync) | Game lighting capture shims. |
 
 ## Prerequisites
 
@@ -79,7 +78,6 @@ nexus/
   nexus-web/       React dashboard, served by the service
   nexus-overlay/   Desktop / in-game overlay
   nexus-rgb/       OpenRGB-headless workspace (RGB device backends)
-  nexus-gamesync/  Game lighting capture shims
   .github/         Cross-component CI
   brand/           Brand assets
 ```

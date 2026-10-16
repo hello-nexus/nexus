@@ -14,7 +14,3 @@
 	path = nexus-rgb
 	url = https://github.com/hello-nexus/nexus-rgb.git
 	branch = main
-[submodule "nexus-gamesync"]
-	path = nexus-gamesync
-	url = https://github.com/hello-nexus/nexus-gamesync.git
-	branch = main
