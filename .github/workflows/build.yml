@@ -107,24 +107,91 @@ jobs:
       # The full parallel suite intermittently deadlocks on the runner (a
       # known-flaky, threadpool-starvation stall across unrelated async tests -
       # passes on a re-run). --blame-hang-timeout aborts a wedged run in
-      # minutes instead of sitting out the 6h job timeout, and the retry lets a
-      # flaky roll recover; orphaned testhosts from an aborted attempt are
-      # swept first so they cannot wedge the next one.
+      # minutes instead of sitting out the 6h job timeout. A plain failure
+      # reruns only the failed tests (read from the trx), so a retry does not
+      # re-roll every other flaky test; one that passes on a rerun is reported
+      # as a flaky warning. A crash or hang leaves no usable failed list, so
+      # the next attempt reruns the whole suite. Orphaned testhosts from a
+      # failed attempt are swept first so they cannot wedge the next one.
       - name: tests
         run: |
           set +e
+          # Prints the FQN of every failed test (theory cases collapse to the
+          # method, which is what --filter matches), plus any expected name
+          # passed as an argument that never ran. Exits 1 when the run was
+          # aborted or left no trx.
+          failed_tests() {
+            python3 - "$@" <<'PY'
+          import glob, sys, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          files = glob.glob(sys.argv[1] + '/**/*.trx', recursive=True)
+          if not files:
+              sys.exit(1)
+          failed, seen = set(), set()
+          for f in files:
+              try:
+                  root = ET.parse(f).getroot()
+              except ET.ParseError:
+                  sys.exit(1)
+              if any('test run was aborted' in (t.text or '').lower()
+                     for t in root.iterfind('.//t:RunInfo/t:Text', ns)):
+                  sys.exit(1)
+              names = {u.get('id'): m.get('className') + '.' + m.get('name')
+                       for u in root.iterfind('.//t:UnitTest', ns)
+                       for m in u.iterfind('t:TestMethod', ns)}
+              for r in root.iterfind('.//t:UnitTestResult', ns):
+                  name = names.get(r.get('testId'))
+                  if name:
+                      seen.add(name)
+                      if r.get('outcome') == 'Failed':
+                          failed.add(name)
+          failed |= set(sys.argv[2:]) - seen
+          print('\n'.join(sorted(failed)))
+          PY
+          }
+
+          names=""
+          flaky="$RUNNER_TEMP/failed-once.txt"
+          : > "$flaky"
           for attempt in 1 2 3; do
-            echo "::group::test attempt $attempt"
+            dir="$RUNNER_TEMP/test-results/attempt$attempt"
+            filter=()
+            if [ -n "$names" ]; then
+              f=$(printf 'FullyQualifiedName=%s|' $names)
+              filter=(--filter "${f%|}")
+            fi
+            echo "::group::test attempt $attempt${names:+ (failed tests only)}"
             dotnet test Nexus.slnx --no-build -c Release -p:BuildWeb=false \
+              "${filter[@]}" \
               --logger "console;verbosity=normal" \
+              --logger trx --results-directory "$dir" \
               --blame-hang-timeout 6m --blame-hang-dump-type none
             code=$?
             echo "::endgroup::"
-            if [ $code -eq 0 ]; then exit 0; fi
-            echo "::warning::test attempt $attempt exited $code; sweeping testhosts and retrying"
+            failed=$(failed_tests "$dir" $names)
+            parsed=$?
+            if [ $code -eq 0 ] && [ -z "$failed" ]; then
+              sort -u "$flaky" | while read -r t; do
+                echo "::warning title=Flaky test::$t failed, then passed on a rerun"
+              done
+              exit 0
+            fi
+            if [ $parsed -eq 0 ] && [ -n "$failed" ]; then
+              names=$failed
+              echo "$failed" >> "$flaky"
+              next="$(echo "$failed" | wc -l | tr -d ' ') failed test(s); rerunning only those"
+            else
+              names=""
+              next="no failed-test list (crash or hang); rerunning the whole suite"
+            fi
+            [ $attempt -eq 3 ] && break
+            echo "::warning::test attempt $attempt exited $code with $next"
             pkill -9 -f testhost 2>/dev/null || true
             pkill -9 -f "dotnet test" 2>/dev/null || true
             sleep 5
+          done
+          for t in $names; do
+            echo "::error title=Failing test::$t failed on every attempt"
           done
           echo "::error::tests failed after 3 attempts"
           exit 1
