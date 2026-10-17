@@ -116,6 +116,8 @@ jobs:
       - name: tests
         run: |
           set +e
+          # $names holds test FQNs expanded unquoted; never glob them.
+          set -f
           # Prints the FQN of every failed test (theory cases collapse to the
           # method, which is what --filter matches), plus any expected name
           # passed as an argument that never ran. Exits 1 when the run was
@@ -133,6 +135,7 @@ jobs:
                   root = ET.parse(f).getroot()
               except ET.ParseError:
                   sys.exit(1)
+              # English RunInfo text, checked against VSTest 17.14.1.
               if any('test run was aborted' in (t.text or '').lower()
                      for t in root.iterfind('.//t:RunInfo/t:Text', ns)):
                   sys.exit(1)
@@ -150,7 +153,10 @@ jobs:
           PY
           }
 
+          # One trx per test project; fewer means a project never reported.
+          projects=$(grep -c 'Path="tests/[^"]*\.csproj"' Nexus.slnx)
           names=""
+          stuck=""
           flaky="$RUNNER_TEMP/failed-once.txt"
           : > "$flaky"
           for attempt in 1 2 3; do
@@ -170,19 +176,29 @@ jobs:
             echo "::endgroup::"
             failed=$(failed_tests "$dir" $names)
             parsed=$?
-            if [ $code -eq 0 ] && [ -z "$failed" ]; then
+            trx=$(find "$dir" -name '*.trx' | wc -l | tr -d ' ')
+            # A filtered rerun passes only if its trx shows every expected test ran.
+            if [ $code -eq 0 ] && { [ -z "$names" ] || { [ $parsed -eq 0 ] && [ -z "$failed" ]; }; }; then
               sort -u "$flaky" | while read -r t; do
                 echo "::warning title=Flaky test::$t failed, then passed on a rerun"
               done
               exit 0
             fi
-            if [ $parsed -eq 0 ] && [ -n "$failed" ]; then
-              names=$failed
-              echo "$failed" >> "$flaky"
-              next="$(echo "$failed" | wc -l | tr -d ' ') failed test(s); rerunning only those"
-            else
-              names=""
+            names=""
+            if [ $parsed -ne 0 ] || [ -z "$failed" ]; then
               next="no failed-test list (crash or hang); rerunning the whole suite"
+            else
+              stuck=$failed
+              echo "$failed" >> "$flaky"
+              count=$(echo "$failed" | wc -l | tr -d ' ')
+              if [ "$count" -gt 50 ]; then
+                next="$count failed tests; rerunning the whole suite"
+              elif [ "$trx" -ne "$projects" ]; then
+                next="$count failed test(s) but $trx trx file(s) for $projects test project(s); rerunning the whole suite"
+              else
+                names=$failed
+                next="$count failed test(s); rerunning only those"
+              fi
             fi
             [ $attempt -eq 3 ] && break
             echo "::warning::test attempt $attempt exited $code with $next"
@@ -190,8 +206,9 @@ jobs:
             pkill -9 -f "dotnet test" 2>/dev/null || true
             sleep 5
           done
-          for t in $names; do
-            echo "::error title=Failing test::$t failed on every attempt"
+          # The last attempt that produced a failed list, even if attempt 3 crashed.
+          for t in $stuck; do
+            echo "::error title=Failing test::$t still failing after 3 attempts"
           done
           echo "::error::tests failed after 3 attempts"
           exit 1
