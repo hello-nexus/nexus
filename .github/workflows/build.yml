@@ -815,7 +815,8 @@ jobs:
   nexus-linux:
     # Pinned, not ubuntu-latest: everything built here links against the
     # runner's glibc, which caps the oldest distro the tarball runs on. A re-pin
-    # must change the image in the OpenRGB and ffmpeg cache keys too.
+    # must change the image in the OpenRGB and ffmpeg cache keys and
+    # GLIBC_FLOOR below too.
     runs-on: ubuntu-24.04
     needs: [nexus-web, nexus-service]
     # Opt-in only (same gate as the Windows installer): builds OpenRGB headless +
@@ -1012,6 +1013,25 @@ jobs:
             --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
             --content-type application/json --cache-control 'public, max-age=31536000, immutable'
           echo "https://builds.hellonexus.com/symbols/web/$sha/"
+
+      - name: check glibc floor
+        working-directory: nexus-service
+        env:
+          GLIBC_FLOOR: '2.39'
+        run: |
+          set -o pipefail
+          max=$(find publish -type f -print0 | while IFS= read -r -d '' f; do
+            head -c4 "$f" | grep -q ELF || continue
+            # Static executables, objects and debug sidecars load no glibc.
+            readelf -d "$f" 2>/dev/null | grep NEEDED >/dev/null || continue
+            syms=$(objdump -T "$f") || { echo "objdump failed on $f" >&2; exit 1; }
+            printf '%s\n' "$syms" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' || true
+          done | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest GLIBC symbol version: $max"
+          [ -n "$max" ] || { echo "no ELF binary with GLIBC symbols found in publish/" >&2; exit 1; }
+          if [ "$(printf '%s\n' "$max" "$GLIBC_FLOOR" | sort -V | tail -1)" != "$GLIBC_FLOOR" ]; then
+            echo "a shipped binary needs glibc $max, above the $GLIBC_FLOOR floor" >&2; exit 1
+          fi
 
       - name: package tarball
         working-directory: nexus-service
