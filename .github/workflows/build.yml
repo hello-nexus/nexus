@@ -813,7 +813,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
 
   nexus-linux:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: everything built here links against the
+    # runner's glibc, which caps the oldest distro the tarball runs on. A re-pin
+    # must change the image in the OpenRGB and ffmpeg cache keys too.
+    runs-on: ubuntu-24.04
     needs: [nexus-web, nexus-service]
     # Opt-in only (same gate as the Windows installer): builds OpenRGB headless +
     # AOT-publishes + packages the Linux tarball.
@@ -860,7 +863,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: nexus-service/Bundled/linux-x64/openrgb
-          key: openrgb-headless-linux-x64-${{ steps.orgb-sha.outputs.sha }}
+          key: openrgb-headless-linux-x64-ubuntu-24.04-${{ steps.orgb-sha.outputs.sha }}
 
       - name: install OpenRGB build deps (cache miss)
         if: steps.orgb-cache.outputs.cache-hit != 'true'
@@ -925,7 +928,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: nexus-service/Bundled/linux-x64/ffmpeg
-          key: ffmpeg-linux-x64-${{ hashFiles('nexus-service/scripts/build-ffmpeg-minimal.sh') }}
+          key: ffmpeg-linux-x64-ubuntu-24.04-${{ hashFiles('nexus-service/scripts/build-ffmpeg-minimal.sh') }}
 
       - name: build minimal ffmpeg (linux-x64, cache miss)
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
