@@ -20,7 +20,6 @@
 // registration. It is extractable from any binary we publish and is a gate,
 // not an authorization.
 import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -37,9 +36,14 @@ if (process.argv.includes('--keygen')) {
   process.exit(0);
 }
 
+async function readStdin() {
+  let s = '';
+  for await (const chunk of process.stdin) s += chunk;
+  return s.trim();
+}
+
 const raw =
-  process.env.NEXUS_CLIENT_SIGNING_KEY ||
-  (process.stdin.isTTY ? '' : readFileSync(0, 'utf8').trim());
+  process.env.NEXUS_CLIENT_SIGNING_KEY || (process.stdin.isTTY ? '' : await readStdin());
 if (!raw) {
   console.error('NEXUS_CLIENT_SIGNING_KEY or a key on stdin is required');
   process.exit(1);
