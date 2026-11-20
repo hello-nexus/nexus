@@ -5,6 +5,12 @@
 //   NEXUS_CLIENT_SIGNING_KEY=<base64 pkcs8 ed25519> \
 //     node scripts/mint-client-token.mjs --version 2.4.1 --channel stable --platform win-x64
 //
+// With the env var unset, the key is read from stdin, so a local mint can pipe
+// it straight from a secret store without it touching disk or argv:
+//
+//   security find-generic-password -s nexus-client-signing-key -w | \
+//     node scripts/mint-client-token.mjs --version 2.4.1 --channel beta --platform win-x64
+//
 // Generate the keypair once (private stays in the CI secret store, public in
 // the API's NEXUS_CLIENT_PUBKEY):
 //
@@ -14,6 +20,7 @@
 // registration. It is extractable from any binary we publish and is a gate,
 // not an authorization.
 import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -30,9 +37,11 @@ if (process.argv.includes('--keygen')) {
   process.exit(0);
 }
 
-const raw = process.env.NEXUS_CLIENT_SIGNING_KEY;
+const raw =
+  process.env.NEXUS_CLIENT_SIGNING_KEY ||
+  (process.stdin.isTTY ? '' : readFileSync(0, 'utf8').trim());
 if (!raw) {
-  console.error('NEXUS_CLIENT_SIGNING_KEY is required');
+  console.error('NEXUS_CLIENT_SIGNING_KEY or a key on stdin is required');
   process.exit(1);
 }
 
